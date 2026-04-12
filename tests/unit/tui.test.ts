@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectReadIntent, extractAbsolutePaths, extractModelToolCall, wrapDisplay } from "../../src/tui/main-app.js";
+import { detectReadIntent, extractAbsolutePaths, extractModelToolCall, isKnownSlashCommandInput, wrapDisplay } from "../../src/tui/main-app.js";
 
 describe("TUI command routing helpers", () => {
   it("detects Chinese file-content questions as read tool intents", () => {
@@ -9,6 +9,17 @@ describe("TUI command routing helpers", () => {
       kind: "read",
       paths: ["/Users/luccazh/Documents/Programing☕️/Chorus/Plan_总结.md"]
     });
+  });
+
+  it("does not treat absolute paths as slash commands", () => {
+    const text = "/Users/luccazh/Documents/Programing☕️/Chorus/Plan_总结.md";
+
+    expect(isKnownSlashCommandInput(text)).toBe(false);
+    expect(detectReadIntent(text)).toEqual({
+      kind: "read",
+      paths: [text]
+    });
+    expect(isKnownSlashCommandInput("/read README.md")).toBe(true);
   });
 
   it("extracts and cleans absolute paths from chat text", () => {

@@ -78,6 +78,7 @@ const commandItems: CommandItem[] = [
   { label: "/quit               quit", value: "quit" }
 ];
 
+const commandNameSet = new Set<string>(commandItems.map((item) => item.value));
 const commandsNeedingInput = new Set<SlashCommandName>(["ask", "read", "list", "search", "memory", "opencode", "bash", "tool"]);
 const absolutePathPattern = /(?:\/[^\s"'`<>|，。！？、,;:!?）)\]]+)+/gu;
 const readIntentPattern = /(内容|有什么|看看|看一下|读取|读一下|查看|打开|里面|文件|what.*(content|contain|say)|read|show|open|cat|look)/iu;
@@ -145,6 +146,20 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
       setInput("");
       return;
     }
+    if (paletteOpen && !busy) {
+      if (key.backspace || key.delete) {
+        const next = input.slice(0, -1);
+        setInput(next);
+        setPaletteOpen(isSlashCommandPrefix(next));
+        return;
+      }
+      if (!key.return && !key.upArrow && !key.downArrow && !key.pageUp && !key.pageDown && !key.ctrl && !key.meta && char) {
+        const next = `${input}${char}`;
+        setInput(next);
+        setPaletteOpen(isSlashCommandPrefix(next));
+        return;
+      }
+    }
     if (key.ctrl && char === "c") {
       close();
       return;
@@ -172,9 +187,7 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
       setPaletteOpen(true);
       return;
     }
-    if (!value.startsWith("/")) {
-      setPaletteOpen(false);
-    }
+    setPaletteOpen(isSlashCommandPrefix(value));
   };
 
   const chooseCommand = async (item: CommandItem) => {
@@ -194,7 +207,7 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
     setPaletteOpen(false);
     setBusy(true);
     try {
-      if (trimmed.startsWith("/")) {
+      if (isKnownSlashCommandInput(trimmed)) {
         await runSlashCommand(trimmed);
         return;
       }
@@ -510,7 +523,7 @@ function splitFirstWord(text: string): [string, string] {
 
 export function detectReadIntent(text: string): ReadIntent | undefined {
   const paths = extractAbsolutePaths(text);
-  if (paths.length === 0 || !readIntentPattern.test(text)) {
+  if (paths.length === 0 || (!readIntentPattern.test(text) && !isOnlyPaths(text, paths))) {
     return undefined;
   }
   return { kind: "read", paths };
@@ -532,6 +545,31 @@ export function extractAbsolutePaths(text: string): string[] {
 
 function cleanPath(path: string): string {
   return path.replace(/[，。！？、,;:!?）)\]]+$/u, "");
+}
+
+export function isKnownSlashCommandInput(text: string): boolean {
+  const command = parseSlashCommand(text);
+  return Boolean(command && commandNameSet.has(command.name));
+}
+
+function isSlashCommandPrefix(text: string): boolean {
+  if (!text.startsWith("/")) return false;
+  const body = text.slice(1);
+  if (body === "") return true;
+  if (/\s/u.test(body)) return false;
+  const lowered = body.toLowerCase();
+  return commandItems.some((item) => item.value.startsWith(lowered));
+}
+
+function isOnlyPaths(text: string, paths: string[]): boolean {
+  let remaining = text;
+  for (const path of paths) {
+    const index = remaining.indexOf(path);
+    if (index >= 0) {
+      remaining = `${remaining.slice(0, index)}${remaining.slice(index + path.length)}`;
+    }
+  }
+  return remaining.replace(/[\s，。！？、,;:!?()[\]{}"'`<>|]+/gu, "").length === 0;
 }
 
 function parsePathList(args: string): string[] {

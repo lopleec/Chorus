@@ -69,7 +69,7 @@ Useful TUI commands:
 /quit               quit
 ```
 
-You can also paste a local absolute path into normal chat and ask about its content. For example:
+You can also paste a local absolute path into normal chat and ask about its content. Absolute paths like `/Users/...` are treated as paths, not slash commands. For example:
 
 ```text
 /Users/luccazh/Documents/Programing☕️/Chorus/Plan_总结.md 这个文件有什么内容
@@ -300,7 +300,7 @@ Expected result:
 
 ```text
 7 test files passed
-21 tests passed
+22 tests passed
 ```
 
 Node may print an experimental warning for `node:sqlite` on Node 23. The warning is expected and does not indicate a failing check.
