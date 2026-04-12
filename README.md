@@ -1,15 +1,230 @@
 # Chorus
 
-Chorus is a local-first macOS agent core. This first implementation slice focuses on the runtime kernel: provider routing, tool gateway, task/sub-agent scheduling, persistence, memory retrieval, and a lightweight CLI.
+Chorus is a local-first macOS agent core with a CLI, TUI onboarding, provider routing, tool gateway, sub-agent scheduler, persistent memory, operation logs, and a first pass at the built-in tool set.
 
-## Development
+This repository currently implements the kernel and command-line workflow. The full chat TUI is not the main surface yet; the implemented TUI piece is onboarding.
+
+## Requirements
+
+- macOS
+- Node.js 20 or newer
+- pnpm
+- Optional: OpenCode, if you want to use the `opencode` tool
+- Optional: provider API keys for OpenAI, Anthropic, or Gemini
+
+## Install
 
 ```bash
 pnpm install
 pnpm build
-pnpm test
+```
+
+Use the development command while working in the repo:
+
+```bash
 pnpm dev status
+```
+
+Or link the built CLI globally:
+
+```bash
+pnpm build
+pnpm link --global
+chorus status
+```
+
+## First Run
+
+Run the TUI onboarding flow:
+
+```bash
 pnpm dev onboard
 ```
 
-Runtime state defaults to `~/.chorus`. Tests use temporary `CHORUS_HOME` directories.
+It saves settings to:
+
+```text
+~/.chorus/config.json
+```
+
+The onboarding flow configures:
+
+- agent name
+- UI language
+- tone/personality
+- provider and default model
+- provider API key
+- optional OpenAI base URL
+- OpenCode enable/disable
+- addon review strictness
+- addon cooldown duration
+
+You can also configure providers with environment variables. Environment variables override saved settings when the runtime starts:
+
+```bash
+export CHORUS_PROVIDER=openai
+export CHORUS_MODEL=gpt-4o-mini
+export OPENAI_API_KEY=...
+export OPENAI_BASE_URL=...
+
+export CHORUS_PROVIDER=anthropic
+export CHORUS_MODEL=claude-3-5-haiku-latest
+export ANTHROPIC_API_KEY=...
+
+export CHORUS_PROVIDER=gemini
+export CHORUS_MODEL=gemini-2.0-flash-001
+export GEMINI_API_KEY=...
+```
+
+For local testing without network calls:
+
+```bash
+export CHORUS_PROVIDER=mock
+pnpm dev ask ping
+```
+
+## Data Directory
+
+Runtime state defaults to:
+
+```text
+~/.chorus
+```
+
+Important files:
+
+- `~/.chorus/config.json` for user settings
+- `~/.chorus/chorus.sqlite` for structured state and memory
+- `~/.chorus/logs/operations.jsonl` for tool execution logs
+- `~/.chorus/tasks/<task-id>.jsonl` for task timelines
+- `~/.chorus/workspaces/<workspace>/summary.md` for human-readable notes
+
+Use `CHORUS_HOME` to run Chorus against a different data directory:
+
+```bash
+CHORUS_HOME=/tmp/chorus-dev pnpm dev status
+```
+
+## Common Commands
+
+Show runtime status:
+
+```bash
+pnpm dev status
+```
+
+Ask the configured provider:
+
+```bash
+pnpm dev ask "Say hello from Chorus"
+```
+
+List tools:
+
+```bash
+pnpm dev tools list
+```
+
+Run a tool with JSON parameters:
+
+```bash
+pnpm dev tool bash '{"command":"pwd"}'
+pnpm dev tool read '{"path":"README.md"}'
+pnpm dev tool search '{"path":".","query":"OpenCode"}'
+```
+
+Dangerous shell commands are blocked by the gateway:
+
+```bash
+pnpm dev tool bash '{"command":"rm -rf ./danger"}'
+pnpm dev tool bash '{"command":"sudo whoami"}'
+```
+
+OpenCode must go through the dedicated tool. Chorus calls it as `opencode run [message]`:
+
+```bash
+pnpm dev tool opencode '{"message":"Explain this repository","cwd":"."}'
+```
+
+HTTP and web tools:
+
+```bash
+pnpm dev tool http '{"method":"GET","url":"https://example.com"}'
+pnpm dev tool web '{"action":"read","url":"https://example.com"}'
+pnpm dev tool web '{"action":"search","query":"Chorus local agent"}'
+```
+
+Git helper:
+
+```bash
+pnpm dev tool git '{"action":"status"}'
+pnpm dev tool git '{"action":"diff"}'
+```
+
+Memory:
+
+```bash
+pnpm dev memory add --kind world_fact --summary "Chorus stores structured memory in SQLite" --tags chorus,memory
+pnpm dev memory search "SQLite memory"
+pnpm dev memory prune
+```
+
+Sub-agents:
+
+```bash
+pnpm dev tool open_subagent '{"goal":"Inspect README","workspace":"chorus","success_criteria":["Report findings"],"file_scope":["README.md"]}'
+pnpm dev subagents list
+pnpm dev subagents stop <sub-agent-id> --scope agent --reason "manual stop"
+```
+
+Addon review:
+
+```bash
+pnpm dev tool install_addon '{"source":"./some-addon","addonType":"plugin"}'
+```
+
+Only a `security_review` actor can call `allow` or `decline` successfully through the tool gateway.
+
+## Built-In Tools
+
+Current tools:
+
+- `bash`
+- `read`
+- `write`
+- `edit`
+- `list`
+- `search`
+- `del`
+- `memory`
+- `http`
+- `web`
+- `git`
+- `screen`
+- `ui`
+- `opencode`
+- `mcp`
+- `open_subagent`
+- `contact`
+- `stop`
+- `list_subagents`
+- `install_addon`
+- `allow`
+- `decline`
+
+## Verify
+
+Run the full local check:
+
+```bash
+pnpm check
+```
+
+Expected result:
+
+```text
+6 test files passed
+16 tests passed
+```
+
+Node may print an experimental warning for `node:sqlite` on Node 23. The warning is expected and does not indicate a failing check.
