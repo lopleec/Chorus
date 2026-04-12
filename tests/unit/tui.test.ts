@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { detectReadIntent, extractAbsolutePaths, extractModelToolCall, isKnownSlashCommandInput, mouseWheelDelta, wrapDisplay } from "../../src/tui/main-app.js";
+import {
+  detectReadIntent,
+  extractAbsolutePaths,
+  extractModelToolCall,
+  isKnownSlashCommandInput,
+  markdownLines,
+  mouseWheelDelta,
+  stripMouseReports,
+  wrapDisplay
+} from "../../src/tui/main-app.js";
 
 describe("TUI command routing helpers", () => {
   it("detects Chinese file-content questions as read tool intents", () => {
@@ -46,6 +55,18 @@ describe("TUI command routing helpers", () => {
 
   it("parses terminal mouse wheel sequences", () => {
     expect(mouseWheelDelta("\u001b[<64;10;10M")).toBe(3);
-    expect(mouseWheelDelta("\u001b[<65;10;10M")).toBe(-3);
+    expect(mouseWheelDelta("[<65:10:10M")).toBe(-3);
+    expect(stripMouseReports("hello[<64;21;11M world\u001b[<0;10;10m")).toBe("hello world");
+  });
+
+  it("renders basic markdown into terminal lines", () => {
+    expect(markdownLines("# Title\n- **item**\n> quote\n```ts\nconst x = 1\n```")).toEqual([
+      { text: "TITLE", style: "heading" },
+      { text: "- item", style: "list" },
+      { text: "| quote", style: "quote" },
+      { text: "--- ts ---", style: "code" },
+      { text: "const x = 1", style: "code" },
+      { text: "---", style: "code" }
+    ]);
   });
 });

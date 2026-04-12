@@ -48,7 +48,7 @@ Open the main bordered TUI:
 pnpm dev tui
 ```
 
-Type in the bottom chat box and press Enter to talk. Provider responses stream into the conversation when the selected provider supports streaming. Type `/` to open the command palette, use the up/down arrow keys, then press Enter. When the command palette is closed, use up/down, PageUp/PageDown, or terminal mouse wheel events to scroll the conversation. Mouse wheel support depends on the terminal sending SGR mouse events.
+Type in the bottom chat box and press Enter to talk. Provider responses stream into the conversation when the selected provider supports streaming, and basic Markdown from agent replies is rendered for headings, lists, quotes, code blocks, and links. Type `/` to open the command palette, use the up/down arrow keys, then press Enter. When the command palette is closed, use up/down, PageUp/PageDown, or terminal mouse wheel events to scroll the conversation. Mouse wheel support depends on the terminal sending SGR mouse events, and those mouse reports are filtered from the input box.
 
 TUI slash commands are UI controls only. Agent tools are not exposed as user commands:
 
@@ -290,7 +290,7 @@ Expected result:
 
 ```text
 7 test files passed
-24 tests passed
+25 tests passed
 ```
 
 Node may print an experimental warning for `node:sqlite` on Node 23. The warning is expected and does not indicate a failing check.

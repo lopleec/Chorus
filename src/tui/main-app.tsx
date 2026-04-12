@@ -14,6 +14,7 @@ interface TuiMessage {
 interface RenderLine {
   from: TuiMessage["from"];
   text: string;
+  style: "normal" | "heading" | "quote" | "code" | "list" | "rule";
 }
 
 interface CommandItem {
@@ -63,6 +64,7 @@ const commandNameSet = new Set<string>(commandItems.map((item) => item.value));
 const absolutePathPattern = /(?:\/[^\s"'`<>|，。！？、,;:!?）)\]]+)+/gu;
 const readIntentPattern = /(内容|有什么|看看|看一下|读取|读一下|查看|打开|里面|文件|what.*(content|contain|say)|read|show|open|cat|look)/iu;
 const toolCallTagPattern = /<chorus_tool_call>\s*([\s\S]*?)\s*<\/chorus_tool_call>/iu;
+const mouseReportPattern = /(?:\x1b)?\[<(\d+)[;:]\d+[;:]\d+[mM]/gu;
 const maxModelToolTurns = 4;
 
 function initialMessage(): TuiMessage {
@@ -140,8 +142,10 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
 
   useInput((char, key) => {
     const wheelDelta = mouseWheelDelta(char);
-    if (!paletteOpen && !busy && wheelDelta !== 0) {
-      setScrollOffset((offset) => Math.max(0, Math.min(maxScroll, offset + wheelDelta)));
+    if (isMouseReport(char)) {
+      if (!paletteOpen && !busy && wheelDelta !== 0) {
+        setScrollOffset((offset) => Math.max(0, Math.min(maxScroll, offset + wheelDelta)));
+      }
       return;
     }
     if (key.escape && paletteOpen) {
@@ -185,12 +189,13 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
   });
 
   const updateInput = (value: string) => {
-    setInput(value);
-    if (value === "/") {
+    const cleanValue = stripMouseReports(value);
+    setInput(cleanValue);
+    if (cleanValue === "/") {
       setPaletteOpen(true);
       return;
     }
-    setPaletteOpen(isSlashCommandPrefix(value));
+    setPaletteOpen(isSlashCommandPrefix(cleanValue));
   };
 
   const chooseCommand = async (item: CommandItem) => {
@@ -317,7 +322,13 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
 
       <Box width={frameWidth} height={viewportHeight} flexDirection="column" overflow="hidden">
         {visibleLines.length === 0 ? <Text dimColor> </Text> : visibleLines.map((line, index) => (
-          <Text key={`${firstVisibleLine}-${index}-${line.from}`} color={messageColor(line.from)} wrap="truncate-end">
+          <Text
+            key={`${firstVisibleLine}-${index}-${line.from}`}
+            color={messageColor(line)}
+            bold={line.style === "heading"}
+            dimColor={line.style === "quote"}
+            wrap="truncate-end"
+          >
             {line.text}
           </Text>
         ))}
@@ -515,15 +526,28 @@ export function isKnownSlashCommandInput(text: string): boolean {
   return Boolean(command && commandNameSet.has(command.name));
 }
 
+export function stripMouseReports(input: string): string {
+  return input.replace(mouseReportPattern, "");
+}
+
+export function isMouseReport(input: string): boolean {
+  mouseReportPattern.lastIndex = 0;
+  const found = mouseReportPattern.test(input);
+  mouseReportPattern.lastIndex = 0;
+  return found;
+}
+
 export function mouseWheelDelta(input: string): number {
   let delta = 0;
-  for (const match of input.matchAll(/\x1b\[<(\d+);\d+;\d+[mM]/gu)) {
+  mouseReportPattern.lastIndex = 0;
+  for (const match of input.matchAll(mouseReportPattern)) {
     const button = Number.parseInt(match[1] ?? "", 10);
     if (!Number.isFinite(button) || button < 64) continue;
     const direction = (button - 64) % 4;
     if (direction === 0) delta += 3;
     if (direction === 1) delta -= 3;
   }
+  mouseReportPattern.lastIndex = 0;
   return delta;
 }
 
@@ -551,12 +575,84 @@ function flattenMessages(messages: TuiMessage[], width: number): RenderLine[] {
   const lines: RenderLine[] = [];
   for (const message of messages) {
     const prefixText = prefix(message.from);
-    const wrapped = wrapDisplay(`${prefixText} ${message.text}`, width);
-    for (const line of wrapped) {
-      lines.push({ from: message.from, text: line });
-    }
+    const rendered = message.from === "chorus" ? markdownLines(message.text) : plainLines(message.text);
+    rendered.forEach((line, index) => {
+      const prefix = index === 0 ? `${prefixText} ` : continuationPrefix(prefixText);
+      const wrapped = wrapDisplay(`${prefix}${line.text}`, width);
+      for (const text of wrapped) {
+        lines.push({ from: message.from, text, style: line.style });
+      }
+    });
   }
   return lines;
+}
+
+function plainLines(text: string): Array<{ text: string; style: RenderLine["style"] }> {
+  return text.split("\n").map((line) => ({ text: line, style: "normal" }));
+}
+
+export function markdownLines(markdown: string): Array<{ text: string; style: RenderLine["style"] }> {
+  const lines: Array<{ text: string; style: RenderLine["style"] }> = [];
+  let inFence = false;
+  let fenceLabel = "";
+
+  for (const rawLine of markdown.split("\n")) {
+    const trimmed = rawLine.trim();
+    const fence = /^```+\s*([^`]*)$/u.exec(trimmed);
+    if (fence) {
+      inFence = !inFence;
+      fenceLabel = inFence ? (fence[1]?.trim() || "code") : "";
+      lines.push({ text: inFence ? `--- ${fenceLabel} ---` : "---", style: "code" });
+      continue;
+    }
+    if (inFence) {
+      lines.push({ text: rawLine || " ", style: "code" });
+      continue;
+    }
+
+    if (/^(-{3,}|\*{3,}|_{3,})$/u.test(trimmed)) {
+      lines.push({ text: "----------------", style: "rule" });
+      continue;
+    }
+
+    const heading = /^(#{1,6})\s+(.+)$/u.exec(rawLine);
+    if (heading) {
+      lines.push({ text: cleanInlineMarkdown(heading[2] ?? "").toUpperCase(), style: "heading" });
+      continue;
+    }
+
+    const quote = /^>\s?(.*)$/u.exec(rawLine);
+    if (quote) {
+      lines.push({ text: `| ${cleanInlineMarkdown(quote[1] ?? "")}`, style: "quote" });
+      continue;
+    }
+
+    const list = /^(\s*)([-*+]|\d+[.)])\s+(.+)$/u.exec(rawLine);
+    if (list) {
+      const indent = list[1] ?? "";
+      const marker = list[2] ?? "-";
+      lines.push({ text: `${indent}${marker} ${cleanInlineMarkdown(list[3] ?? "")}`, style: "list" });
+      continue;
+    }
+
+    lines.push({ text: cleanInlineMarkdown(rawLine), style: "normal" });
+  }
+
+  return lines.length ? lines : [{ text: "", style: "normal" }];
+}
+
+function cleanInlineMarkdown(text: string): string {
+  return text
+    .replace(/`([^`]+)`/gu, "$1")
+    .replace(/\*\*([^*]+)\*\*/gu, "$1")
+    .replace(/__([^_]+)__/gu, "$1")
+    .replace(/\*([^*]+)\*/gu, "$1")
+    .replace(/_([^_]+)_/gu, "$1")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/gu, "$1 ($2)");
+}
+
+function continuationPrefix(prefixText: string): string {
+  return " ".repeat(displayTextWidth(prefixText) + 1);
 }
 
 export function wrapDisplay(text: string, maxWidth: number): string[] {
@@ -613,10 +709,17 @@ function displayWidth(char: string): number {
   return 1;
 }
 
-function messageColor(from: TuiMessage["from"]): "yellow" | "white" | "red" | "cyan" {
-  if (from === "user") return "yellow";
-  if (from === "system") return "red";
-  if (from === "tool") return "cyan";
+function displayTextWidth(text: string): number {
+  return [...text].reduce((width, char) => width + displayWidth(char), 0);
+}
+
+function messageColor(line: RenderLine): "yellow" | "white" | "red" | "cyan" | "green" | "gray" {
+  if (line.from === "user") return "yellow";
+  if (line.from === "system") return "red";
+  if (line.from === "tool") return "cyan";
+  if (line.style === "heading") return "green";
+  if (line.style === "code" || line.style === "rule") return "cyan";
+  if (line.style === "quote") return "gray";
   return "white";
 }
 
