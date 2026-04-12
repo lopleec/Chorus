@@ -7,6 +7,7 @@ import { readProviderEnv } from "./config/env.js";
 import { getChorusPaths, resolveChorusHome, ensureChorusDirs } from "./config/paths.js";
 import { loadSettings, saveSettings } from "./config/settings.js";
 import { OnboardApp } from "./onboarding/onboard-app.js";
+import { MainTuiApp } from "./tui/main-app.js";
 
 const program = new Command();
 
@@ -29,6 +30,19 @@ program.command("onboard").description("Run TUI onboarding and save local settin
     }));
   });
   console.log(`Saved Chorus settings to ${paths.configPath}`);
+});
+
+program.command("tui").description("Open the bordered interactive TUI.").action(async () => {
+  const runtime = createRuntime();
+  await new Promise<void>((resolve) => {
+    render(React.createElement(MainTuiApp, {
+      runtime,
+      onExit: () => {
+        runtime.close();
+        resolve();
+      }
+    }));
+  });
 });
 
 program.command("status").description("Show runtime status.").action(() => {

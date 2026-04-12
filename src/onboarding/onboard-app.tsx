@@ -78,9 +78,11 @@ export function OnboardApp({ initial = defaultSettings(), onComplete }: OnboardA
 
   return (
     <Box flexDirection="column" padding={1}>
-      <Text color="cyan">Chorus Onboarding</Text>
-      <Text>Configure the local agent runtime. Values are saved to ~/.chorus/config.json.</Text>
-      <Box marginTop={1} flexDirection="column">
+      <Box borderStyle="single" borderColor="cyan" paddingX={1} flexDirection="column">
+        <Text color="cyan">Chorus Onboarding</Text>
+        <Text>Use arrow keys and Enter for choices. Values are saved to ~/.chorus/config.json.</Text>
+      </Box>
+      <Box marginTop={1} borderStyle="single" borderColor="green" paddingX={1} flexDirection="column">
         {step === "agentName" && <PromptInput label="Agent name" value={input} setValue={setInput} onSubmit={submitText} />}
         {step === "language" && (
           <SelectInput

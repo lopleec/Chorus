@@ -23,6 +23,7 @@ Use the development command while working in the repo:
 
 ```bash
 pnpm dev status
+pnpm dev tui
 ```
 
 Or link the built CLI globally:
@@ -40,6 +41,14 @@ Run the TUI onboarding flow:
 ```bash
 pnpm dev onboard
 ```
+
+Open the main bordered TUI:
+
+```bash
+pnpm dev tui
+```
+
+Use the up/down arrow keys to select menu items and Enter to run them. Press `q` from the menu to quit.
 
 It saves settings to:
 
