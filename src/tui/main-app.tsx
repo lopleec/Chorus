@@ -4,7 +4,7 @@ import SelectInput from "ink-select-input";
 import TextInput from "ink-text-input";
 import type { ChorusRuntime } from "../runtime/create-runtime.js";
 
-type InputMode = "none" | "ask" | "memory" | "opencode";
+type InputMode = "chat" | "memory" | "opencode";
 
 interface TuiMessage {
   from: "user" | "chorus" | "system";
@@ -22,8 +22,8 @@ export interface MainTuiAppProps {
 }
 
 const menuItems: MenuItem[] = [
+  { label: "Chat mode", value: "chat" },
   { label: "Status", value: "status" },
-  { label: "Ask model", value: "ask" },
   { label: "Search memory", value: "memory" },
   { label: "List tools", value: "tools" },
   { label: "List sub-agents", value: "subagents" },
@@ -35,15 +35,20 @@ const menuItems: MenuItem[] = [
 export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
   const app = useApp();
   const [messages, setMessages] = useState<TuiMessage[]>([
-    { from: "chorus", text: "Chorus TUI is ready. Use arrow keys and Enter. Press q to quit." }
+    { from: "chorus", text: "Chorus TUI is ready. Type a message and press Enter. Press Tab for the menu." }
   ]);
-  const [inputMode, setInputMode] = useState<InputMode>("none");
+  const [inputMode, setInputMode] = useState<InputMode>("chat");
   const [input, setInput] = useState("");
+  const [menuFocused, setMenuFocused] = useState(false);
   const [busy, setBusy] = useState(false);
   const [refresh, setRefresh] = useState(0);
 
-  useInput((char) => {
-    if (char === "q" && inputMode === "none") {
+  useInput((char, key) => {
+    if (key.tab) {
+      setMenuFocused((focused) => !focused);
+      return;
+    }
+    if (char === "q" && menuFocused) {
       onExit();
       app.exit();
     }
@@ -71,9 +76,10 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
       app.exit();
       return;
     }
-    if (item.value === "ask" || item.value === "memory" || item.value === "opencode") {
+    if (item.value === "chat" || item.value === "memory" || item.value === "opencode") {
       setInput("");
       setInputMode(item.value as InputMode);
+      setMenuFocused(false);
       return;
     }
     setBusy(true);
@@ -108,16 +114,25 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
   const submitInput = async (value: string) => {
     const trimmed = value.trim();
     if (!trimmed) {
-      setInputMode("none");
+      setInputMode("chat");
       return;
     }
     addMessage({ from: "user", text: trimmed });
     setInput("");
     setBusy(true);
     try {
-      if (inputMode === "ask") {
+      if (inputMode === "chat") {
         const response = await runtime.providerRegistry.generateText({
-          messages: [{ role: "user", content: trimmed }],
+          messages: [
+            ...messages
+              .filter((message) => message.from === "user" || message.from === "chorus")
+              .slice(-10)
+              .map((message) => ({
+                role: message.from === "user" ? "user" as const : "assistant" as const,
+                content: message.text
+              })),
+            { role: "user", content: trimmed }
+          ],
           model: runtime.settings.model,
           maxTokens: 1024
         });
@@ -144,7 +159,7 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
       addMessage({ from: "system", text: `Error: ${(error as Error).message}` });
     } finally {
       setBusy(false);
-      setInputMode("none");
+      setInputMode("chat");
     }
   };
 
@@ -152,7 +167,7 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
     <Box flexDirection="column" padding={1}>
       <Box borderStyle="single" borderColor="cyan" paddingX={1} marginBottom={1}>
         <Text color="cyan">Chorus</Text>
-        <Text>  {runtime.settings.agentName} | provider: {runtime.settings.provider} | q: quit</Text>
+        <Text>  {runtime.settings.agentName} | provider: {runtime.settings.provider} | Tab: menu | q in menu: quit</Text>
       </Box>
 
       <Box>
@@ -160,7 +175,7 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
           <Text color="green">Messages</Text>
           {messages.map((message, index) => (
             <Text key={`${index}-${message.from}`} color={message.from === "user" ? "yellow" : message.from === "system" ? "red" : "white"}>
-              {message.from}: {message.text}
+              {message.from}: {clip(message.text, 300)}
             </Text>
           ))}
         </Box>
@@ -183,18 +198,15 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
       <Box marginTop={1}>
         <Box width={42} borderStyle="single" borderColor="magenta" paddingX={1} flexDirection="column" marginRight={1}>
           <Text color="magenta">Menu</Text>
-          <SelectInput items={menuItems} onSelect={choose} isFocused={inputMode === "none" && !busy} />
+          <SelectInput items={menuItems} onSelect={choose} isFocused={menuFocused && !busy} />
         </Box>
         <Box width={58} borderStyle="single" borderColor="yellow" paddingX={1} flexDirection="column">
           <Text color="yellow">Input</Text>
-          {inputMode === "none" ? (
-            <Text dimColor>Select a command with up/down and press Enter.</Text>
-          ) : (
-            <Box>
-              <Text>{inputLabel(inputMode)}: </Text>
-              <TextInput value={input} onChange={setInput} onSubmit={submitInput} />
-            </Box>
-          )}
+          {menuFocused ? <Text dimColor>Menu focused. Use up/down and Enter, or press Tab to chat.</Text> : null}
+          <Box>
+            <Text>{inputLabel(inputMode)}: </Text>
+            <TextInput value={input} onChange={setInput} onSubmit={submitInput} focus={!menuFocused && !busy} />
+          </Box>
         </Box>
       </Box>
     </Box>
@@ -202,8 +214,12 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
 }
 
 function inputLabel(mode: InputMode): string {
-  if (mode === "ask") return "Ask";
+  if (mode === "chat") return "Chat";
   if (mode === "memory") return "Memory keyword";
   if (mode === "opencode") return "OpenCode message";
   return "";
+}
+
+function clip(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}...` : text;
 }

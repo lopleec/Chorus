@@ -48,7 +48,7 @@ Open the main bordered TUI:
 pnpm dev tui
 ```
 
-Use the up/down arrow keys to select menu items and Enter to run them. Press `q` from the menu to quit.
+Type in the bottom chat box and press Enter to talk. Press Tab to focus the menu, then use the up/down arrow keys and Enter to run menu actions. Press `q` while the menu is focused to quit.
 
 It saves settings to:
 
@@ -94,6 +94,7 @@ Each custom provider supports:
 - `apiKey`: optional API key
 - `models`: one or more model IDs
 - `callFormat`: `openai_chat`, `anthropic_messages`, or `gemini_generate_content`
+- `allowInsecureTls`: optional, only for trusted custom gateways with broken certificate chains
 
 Example:
 
@@ -107,7 +108,8 @@ Example:
       "baseUrl": "http://localhost:11434/v1",
       "apiKey": "not-needed",
       "models": ["qwen2.5-coder:32b", "llama3.1:8b"],
-      "callFormat": "openai_chat"
+      "callFormat": "openai_chat",
+      "allowInsecureTls": false
     }
   ]
 }

@@ -30,7 +30,9 @@ export class CustomProvider implements TextProvider {
     this.delegate = new OpenAIProvider({
       apiKey: settings.apiKey ?? "not-configured",
       baseURL: settings.baseUrl,
-      defaultModel
+      defaultModel,
+      allowInsecureTls: settings.allowInsecureTls,
+      providerName: settings.name
     });
   }
 

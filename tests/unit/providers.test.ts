@@ -42,7 +42,8 @@ describe("provider registry", () => {
         baseUrl: "http://localhost:11434/v1",
         apiKey: "not-needed",
         models: ["model-a", "model-b"],
-        callFormat: "openai_chat"
+        callFormat: "openai_chat",
+        allowInsecureTls: false
       }]
     }, {
       provider: "local-openai",

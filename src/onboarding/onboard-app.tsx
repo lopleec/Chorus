@@ -15,6 +15,7 @@ type Step =
   | "customProviderApiKey"
   | "customProviderModels"
   | "customProviderFormat"
+  | "customProviderTls"
   | "model"
   | "apiKey"
   | "openaiBaseUrl"
@@ -33,7 +34,7 @@ export function OnboardApp({ initial = defaultSettings(), onComplete }: OnboardA
   const [settings, setSettings] = useState<ChorusSettings>(initial);
   const [step, setStep] = useState<Step>("agentName");
   const [input, setInput] = useState(initial.agentName);
-  const [customDraft, setCustomDraft] = useState({ name: "", baseUrl: "", apiKey: "", models: "" });
+  const [customDraft, setCustomDraft] = useState({ name: "", baseUrl: "", apiKey: "", models: "", callFormat: "openai_chat" as ChorusSettings["customProviders"][number]["callFormat"] });
 
   const submitText = (value: string) => {
     if (step === "agentName") {
@@ -136,7 +137,7 @@ export function OnboardApp({ initial = defaultSettings(), onComplete }: OnboardA
             ]}
             onSelect={(item) => {
               if (item.value === "custom:add") {
-                setCustomDraft({ name: "", baseUrl: "", apiKey: "", models: "" });
+                setCustomDraft({ name: "", baseUrl: "", apiKey: "", models: "", callFormat: "openai_chat" });
                 setInput("");
                 setStep("customProviderName");
                 return;
@@ -167,13 +168,26 @@ export function OnboardApp({ initial = defaultSettings(), onComplete }: OnboardA
               { label: "Gemini-compatible generateContent", value: "gemini_generate_content" }
             ]}
             onSelect={(item) => {
+              setCustomDraft({ ...customDraft, callFormat: item.value as ChorusSettings["customProviders"][number]["callFormat"] });
+              setStep("customProviderTls");
+            }}
+          />
+        )}
+        {step === "customProviderTls" && (
+          <SelectInput
+            items={[
+              { label: "Verify TLS certificates", value: "secure" },
+              { label: "Allow insecure TLS for this custom provider", value: "insecure" }
+            ]}
+            onSelect={(item) => {
               const models = customDraft.models.split(",").map((model) => model.trim()).filter(Boolean);
               const provider = {
                 name: customDraft.name || "custom",
                 baseUrl: customDraft.baseUrl,
                 apiKey: customDraft.apiKey || undefined,
                 models,
-                callFormat: item.value as ChorusSettings["customProviders"][number]["callFormat"]
+                callFormat: customDraft.callFormat,
+                allowInsecureTls: item.value === "insecure"
               };
               setSettings({
                 ...settings,

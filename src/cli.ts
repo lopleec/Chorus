@@ -61,7 +61,8 @@ program.command("status").description("Show runtime status.").action(() => {
         customProviders: runtime.settings.customProviders.map((provider) => ({
           name: provider.name,
           models: provider.models,
-          callFormat: provider.callFormat
+          callFormat: provider.callFormat,
+          allowInsecureTls: provider.allowInsecureTls
         })),
         opencodeEnabled: runtime.settings.opencode.enabled,
         mcpServers: runtime.settings.mcp.servers.length

@@ -9,7 +9,8 @@ const customProviderSchema = z.object({
   baseUrl: z.string().url(),
   apiKey: z.string().optional(),
   models: z.array(z.string().min(1)).default([]),
-  callFormat: providerCallFormatSchema.default("openai_chat")
+  callFormat: providerCallFormatSchema.default("openai_chat"),
+  allowInsecureTls: z.boolean().default(false)
 });
 
 export const chorusSettingsSchema = z.object({
