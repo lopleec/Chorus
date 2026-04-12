@@ -1,0 +1,39 @@
+{
+  "name": "chorus",
+  "version": "0.1.0",
+  "description": "Local-first Chorus agent core prototype.",
+  "type": "module",
+  "bin": {
+    "chorus": "./dist/src/cli.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "check": "pnpm build && pnpm test"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.40.1",
+    "@google/genai": "^0.12.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "commander": "^13.1.0",
+    "ink": "^7.0.0",
+    "ink-select-input": "^6.2.0",
+    "ink-text-input": "^6.0.0",
+    "openai": "^4.86.1",
+    "playwright": "^1.59.1",
+    "react": "^19.2.5",
+    "simple-git": "^3.36.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/react": "^19.2.14",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.8"
+  }
+}
