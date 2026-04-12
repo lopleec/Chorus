@@ -2,11 +2,21 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { z } from "zod";
 import type { ChorusPaths } from "./paths.js";
 
+export const providerCallFormatSchema = z.enum(["openai_chat", "anthropic_messages", "gemini_generate_content"]);
+
+const customProviderSchema = z.object({
+  name: z.string().min(1),
+  baseUrl: z.string().url(),
+  apiKey: z.string().optional(),
+  models: z.array(z.string().min(1)).default([]),
+  callFormat: providerCallFormatSchema.default("openai_chat")
+});
+
 export const chorusSettingsSchema = z.object({
   agentName: z.string().default("Chorus"),
   language: z.enum(["en", "zh"]).default("zh"),
   tone: z.string().default("warm, concise, capable"),
-  provider: z.enum(["mock", "openai", "anthropic", "gemini"]).default("mock"),
+  provider: z.string().default("mock"),
   model: z.string().optional(),
   openaiBaseUrl: z.string().optional(),
   apiKeys: z.object({
@@ -14,6 +24,7 @@ export const chorusSettingsSchema = z.object({
     anthropic: z.string().optional(),
     gemini: z.string().optional()
   }).default({}),
+  customProviders: z.array(customProviderSchema).default([]),
   opencode: z.object({
     enabled: z.boolean().default(false),
     syncModel: z.boolean().default(true)
@@ -33,6 +44,8 @@ export const chorusSettingsSchema = z.object({
 });
 
 export type ChorusSettings = z.infer<typeof chorusSettingsSchema>;
+export type ProviderCallFormat = z.infer<typeof providerCallFormatSchema>;
+export type CustomProviderSettings = z.infer<typeof customProviderSchema>;
 
 export function defaultSettings(): ChorusSettings {
   return chorusSettingsSchema.parse({});

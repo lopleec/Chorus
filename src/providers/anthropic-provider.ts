@@ -3,6 +3,7 @@ import type { ProviderRequest, ProviderResponse, TextProvider } from "../core/ty
 
 export interface AnthropicProviderOptions {
   apiKey: string;
+  baseURL?: string;
   defaultModel?: string;
 }
 
@@ -11,7 +12,7 @@ export class AnthropicProvider implements TextProvider {
   private readonly client: Anthropic;
 
   constructor(private readonly options: AnthropicProviderOptions) {
-    this.client = new Anthropic({ apiKey: options.apiKey });
+    this.client = new Anthropic({ apiKey: options.apiKey, baseURL: options.baseURL });
   }
 
   async generateText(request: ProviderRequest): Promise<ProviderResponse> {

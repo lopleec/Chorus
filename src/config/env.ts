@@ -1,7 +1,4 @@
-import { z } from "zod";
 import type { ProviderId } from "../core/types.js";
-
-const providerSchema = z.enum(["openai", "anthropic", "gemini", "mock"]);
 
 export interface ProviderEnvConfig {
   provider: ProviderId;
@@ -13,7 +10,7 @@ export interface ProviderEnvConfig {
 }
 
 export function readProviderEnv(env: NodeJS.ProcessEnv = process.env): ProviderEnvConfig {
-  const provider = providerSchema.catch("mock").parse(env.CHORUS_PROVIDER ?? "mock");
+  const provider = env.CHORUS_PROVIDER?.trim() || "mock";
   return {
     provider,
     model: env.CHORUS_MODEL,

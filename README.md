@@ -62,6 +62,7 @@ The onboarding flow configures:
 - UI language
 - tone/personality
 - provider and default model
+- custom provider name, URL, API key, model IDs, and call format
 - provider API key
 - optional OpenAI base URL
 - OpenCode enable/disable
@@ -83,6 +84,39 @@ export ANTHROPIC_API_KEY=...
 export CHORUS_PROVIDER=gemini
 export CHORUS_MODEL=gemini-2.0-flash-001
 export GEMINI_API_KEY=...
+```
+
+Custom providers are configured in onboarding or directly in `~/.chorus/config.json`.
+Each custom provider supports:
+
+- `name`: the provider name used by `CHORUS_PROVIDER` or `--provider`
+- `baseUrl`: the API endpoint base URL
+- `apiKey`: optional API key
+- `models`: one or more model IDs
+- `callFormat`: `openai_chat`, `anthropic_messages`, or `gemini_generate_content`
+
+Example:
+
+```json
+{
+  "provider": "local-openai",
+  "model": "qwen2.5-coder:32b",
+  "customProviders": [
+    {
+      "name": "local-openai",
+      "baseUrl": "http://localhost:11434/v1",
+      "apiKey": "not-needed",
+      "models": ["qwen2.5-coder:32b", "llama3.1:8b"],
+      "callFormat": "openai_chat"
+    }
+  ]
+}
+```
+
+Then call it with:
+
+```bash
+pnpm dev ask --provider local-openai --model qwen2.5-coder:32b "hello"
 ```
 
 For local testing without network calls:

@@ -58,6 +58,11 @@ program.command("status").description("Show runtime status.").action(() => {
         agentName: runtime.settings.agentName,
         provider: runtime.settings.provider,
         model: runtime.settings.model,
+        customProviders: runtime.settings.customProviders.map((provider) => ({
+          name: provider.name,
+          models: provider.models,
+          callFormat: provider.callFormat
+        })),
         opencodeEnabled: runtime.settings.opencode.enabled,
         mcpServers: runtime.settings.mcp.servers.length
       },
@@ -76,7 +81,7 @@ program.command("ask")
   .argument("<prompt...>", "Prompt text")
   .option("--provider <provider>", "Provider id")
   .option("--model <model>", "Model id")
-  .action(async (prompt: string[], options: { provider?: "openai" | "anthropic" | "gemini" | "mock"; model?: string }) => {
+  .action(async (prompt: string[], options: { provider?: string; model?: string }) => {
     const runtime = createRuntime();
     try {
       const env = readProviderEnv();

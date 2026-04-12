@@ -1,6 +1,6 @@
 import { getChorusPaths, ensureChorusDirs, resolveChorusHome } from "../config/paths.js";
 import { readProviderEnv } from "../config/env.js";
-import { loadSettings, settingsToEnv, type ChorusSettings } from "../config/settings.js";
+import { loadSettings, type ChorusSettings } from "../config/settings.js";
 import { ChorusDatabase } from "../data/sqlite.js";
 import { OperationLog } from "../data/operation-log.js";
 import { MemoryStore } from "../memory/memory-store.js";
@@ -36,9 +36,13 @@ export function createRuntime(env: NodeJS.ProcessEnv = process.env): ChorusRunti
   for (const tool of createBuiltInTools({ memoryStore, subAgentManager, scheduler, database, paths, settings })) {
     toolGateway.register(tool);
   }
-  const providerRegistry = ProviderRegistry.fromEnv(readProviderEnv({
-    ...settingsToEnv(settings),
-    ...env
+  const providerRegistry = ProviderRegistry.fromSettings(settings, readProviderEnv({
+    CHORUS_PROVIDER: env.CHORUS_PROVIDER ?? settings.provider,
+    CHORUS_MODEL: env.CHORUS_MODEL ?? settings.model,
+    OPENAI_API_KEY: env.OPENAI_API_KEY ?? settings.apiKeys.openai,
+    OPENAI_BASE_URL: env.OPENAI_BASE_URL ?? settings.openaiBaseUrl,
+    ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY ?? settings.apiKeys.anthropic,
+    GEMINI_API_KEY: env.GEMINI_API_KEY ?? settings.apiKeys.gemini
   }));
 
   return {

@@ -10,6 +10,11 @@ type Step =
   | "language"
   | "tone"
   | "provider"
+  | "customProviderName"
+  | "customProviderUrl"
+  | "customProviderApiKey"
+  | "customProviderModels"
+  | "customProviderFormat"
   | "model"
   | "apiKey"
   | "openaiBaseUrl"
@@ -28,6 +33,7 @@ export function OnboardApp({ initial = defaultSettings(), onComplete }: OnboardA
   const [settings, setSettings] = useState<ChorusSettings>(initial);
   const [step, setStep] = useState<Step>("agentName");
   const [input, setInput] = useState(initial.agentName);
+  const [customDraft, setCustomDraft] = useState({ name: "", baseUrl: "", apiKey: "", models: "" });
 
   const submitText = (value: string) => {
     if (step === "agentName") {
@@ -40,6 +46,29 @@ export function OnboardApp({ initial = defaultSettings(), onComplete }: OnboardA
       setSettings({ ...settings, tone: value.trim() || "warm, concise, capable" });
       setInput(settings.model ?? "");
       setStep("provider");
+      return;
+    }
+    if (step === "customProviderName") {
+      setCustomDraft({ ...customDraft, name: value.trim() });
+      setInput("");
+      setStep("customProviderUrl");
+      return;
+    }
+    if (step === "customProviderUrl") {
+      setCustomDraft({ ...customDraft, baseUrl: value.trim() });
+      setInput("");
+      setStep("customProviderApiKey");
+      return;
+    }
+    if (step === "customProviderApiKey") {
+      setCustomDraft({ ...customDraft, apiKey: value.trim() });
+      setInput("");
+      setStep("customProviderModels");
+      return;
+    }
+    if (step === "customProviderModels") {
+      setCustomDraft({ ...customDraft, models: value.trim() });
+      setStep("customProviderFormat");
       return;
     }
     if (step === "model") {
@@ -101,12 +130,62 @@ export function OnboardApp({ initial = defaultSettings(), onComplete }: OnboardA
               { label: "mock - local testing", value: "mock" },
               { label: "openai", value: "openai" },
               { label: "anthropic", value: "anthropic" },
-              { label: "gemini", value: "gemini" }
+              { label: "gemini", value: "gemini" },
+              ...settings.customProviders.map((provider) => ({ label: `custom: ${provider.name}`, value: `custom:${provider.name}` })),
+              { label: "Add custom provider", value: "custom:add" }
             ]}
             onSelect={(item) => {
+              if (item.value === "custom:add") {
+                setCustomDraft({ name: "", baseUrl: "", apiKey: "", models: "" });
+                setInput("");
+                setStep("customProviderName");
+                return;
+              }
+              if (String(item.value).startsWith("custom:")) {
+                const name = String(item.value).slice("custom:".length);
+                const provider = settings.customProviders.find((candidate) => candidate.name === name);
+                setSettings({ ...settings, provider: name, model: provider?.models[0] });
+                setInput(provider?.models[0] ?? "");
+                setStep("opencode");
+                return;
+              }
               setSettings({ ...settings, provider: item.value as ChorusSettings["provider"] });
               setInput(settings.model ?? defaultModel(item.value));
               setStep("model");
+            }}
+          />
+        )}
+        {step === "customProviderName" && <PromptInput label="Provider name" value={input} setValue={setInput} onSubmit={submitText} />}
+        {step === "customProviderUrl" && <PromptInput label="Custom base URL" value={input} setValue={setInput} onSubmit={submitText} />}
+        {step === "customProviderApiKey" && <PromptInput label="Custom API key (optional)" value={input} setValue={setInput} onSubmit={submitText} />}
+        {step === "customProviderModels" && <PromptInput label="Model IDs (comma-separated)" value={input} setValue={setInput} onSubmit={submitText} />}
+        {step === "customProviderFormat" && (
+          <SelectInput
+            items={[
+              { label: "OpenAI-compatible chat completions", value: "openai_chat" },
+              { label: "Anthropic-compatible messages", value: "anthropic_messages" },
+              { label: "Gemini-compatible generateContent", value: "gemini_generate_content" }
+            ]}
+            onSelect={(item) => {
+              const models = customDraft.models.split(",").map((model) => model.trim()).filter(Boolean);
+              const provider = {
+                name: customDraft.name || "custom",
+                baseUrl: customDraft.baseUrl,
+                apiKey: customDraft.apiKey || undefined,
+                models,
+                callFormat: item.value as ChorusSettings["customProviders"][number]["callFormat"]
+              };
+              setSettings({
+                ...settings,
+                provider: provider.name,
+                model: provider.models[0],
+                customProviders: [
+                  ...settings.customProviders.filter((existing) => existing.name !== provider.name),
+                  provider
+                ]
+              });
+              setInput(provider.models[0] ?? "");
+              setStep("opencode");
             }}
           />
         )}

@@ -3,6 +3,7 @@ import type { ProviderRequest, ProviderResponse, TextProvider } from "../core/ty
 
 export interface GeminiProviderOptions {
   apiKey: string;
+  baseUrl?: string;
   defaultModel?: string;
 }
 
@@ -11,7 +12,7 @@ export class GeminiProvider implements TextProvider {
   private readonly client: GoogleGenAI;
 
   constructor(private readonly options: GeminiProviderOptions) {
-    this.client = new GoogleGenAI({ apiKey: options.apiKey });
+    this.client = new GoogleGenAI({ apiKey: options.apiKey, apiVersion: undefined, httpOptions: options.baseUrl ? { baseUrl: options.baseUrl } : undefined });
   }
 
   async generateText(request: ProviderRequest): Promise<ProviderResponse> {

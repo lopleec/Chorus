@@ -18,7 +18,7 @@ export type TaskStatus =
 export type ToolExecutionStatus = "ok" | "error" | "blocked";
 export type MemoryKind = "world_fact" | "belief" | "experience" | "summary";
 export type MemoryScope = "global" | "workspace";
-export type ProviderId = "openai" | "anthropic" | "gemini" | "mock";
+export type ProviderId = string;
 
 export interface ToolResult<TData = unknown> {
   status: ToolExecutionStatus;
