@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import SelectInput from "ink-select-input";
 import TextInput from "ink-text-input";
-import type { ProviderMessage, ToolContext } from "../core/types.js";
+import type { ProviderMessage, ToolContext, ToolResult } from "../core/types.js";
 import type { ChorusRuntime } from "../runtime/create-runtime.js";
 
 interface TuiMessage {
@@ -66,6 +66,7 @@ const readIntentPattern = /(内容|有什么|看看|看一下|读取|读一下|�
 const toolCallTagPattern = /<chorus_tool_call>\s*([\s\S]*?)\s*<\/chorus_tool_call>/iu;
 const mouseReportPattern = /(?:\x1b)?\[<(\d+)[;:]\d+[;:]\d+[mM]/gu;
 const maxModelToolTurns = 4;
+const spinnerFrames = ["|", "/", "-", "\\"];
 
 function initialMessage(): TuiMessage {
   return {
@@ -84,6 +85,8 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
   const [input, setInput] = useState("");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [busyLabel, setBusyLabel] = useState("model thinking");
+  const [spinnerIndex, setSpinnerIndex] = useState(0);
   const [refresh, setRefresh] = useState(0);
   const [scrollOffset, setScrollOffset] = useState(0);
 
@@ -118,6 +121,18 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
   const normalizedScroll = Math.min(scrollOffset, maxScroll);
   const firstVisibleLine = Math.max(0, messageLines.length - viewportHeight - normalizedScroll);
   const visibleLines = messageLines.slice(firstVisibleLine, firstVisibleLine + viewportHeight);
+  const activityLabel = busyStateText(busy, spinnerIndex, busyLabel);
+
+  useEffect(() => {
+    if (!busy) {
+      setSpinnerIndex(0);
+      return undefined;
+    }
+    const timer = setInterval(() => {
+      setSpinnerIndex((index) => (index + 1) % spinnerFrames.length);
+    }, 120);
+    return () => clearInterval(timer);
+  }, [busy]);
 
   const addMessage = (message: TuiMessage) => {
     setMessages((current) => [...current, message]);
@@ -209,6 +224,7 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
     pushMessage("user", trimmed);
     setInput("");
     setPaletteOpen(false);
+    setBusyLabel(isKnownSlashCommandInput(trimmed) ? "running command" : "model thinking");
     setBusy(true);
     try {
       if (isKnownSlashCommandInput(trimmed)) {
@@ -221,6 +237,7 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
       pushMessage("system", `Error: ${(error as Error).message}`);
     } finally {
       setBusy(false);
+      setBusyLabel("model thinking");
       setRefresh((value) => value + 1);
     }
   };
@@ -256,6 +273,7 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
     const obviousRead = detectReadIntent(prompt);
 
     for (let turn = 0; turn < maxModelToolTurns; turn += 1) {
+      setBusyLabel(turn === 0 ? "model thinking" : "model thinking with tool result");
       const responseText = await streamProviderTurn(providerMessages, turn === 0 && Boolean(obviousRead));
       const toolCall = extractModelToolCall(responseText)
         ?? (turn === 0 && obviousRead ? readIntentToToolCall(obviousRead) : undefined);
@@ -266,8 +284,10 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
         return;
       }
 
-      pushMessage("tool", agentActivityText(toolCall.name));
+      setBusyLabel(`calling tool: ${toolCall.name}`);
+      pushMessage("tool", toolCallActivityText(toolCall));
       const result = await runtime.toolGateway.execute(toolCall.name, toolCall.params, toolContext());
+      pushMessage("tool", toolResultActivityText(toolCall, result));
       providerMessages.push({
         role: "assistant",
         content: responseText.trim() || modelToolCallText(toolCall)
@@ -335,7 +355,7 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
       </Box>
 
       <Box width={frameWidth} minHeight={1}>
-        <Text dimColor>{statusLine(activeProvider, monitor.tasks.length, monitor.agents.length)} | {busy ? "busy" : "ready"} | {scrollHint(normalizedScroll, maxScroll)}</Text>
+        <Text dimColor>{statusLine(activeProvider, monitor.tasks.length, monitor.agents.length)} | {activityLabel} | {scrollHint(normalizedScroll, maxScroll)}</Text>
       </Box>
 
       {paletteOpen ? (
@@ -347,7 +367,7 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
       ) : null}
 
       <Box width={frameWidth} borderStyle="single" borderColor="gray" paddingX={1} marginTop={1}>
-        <Text color={busy ? "gray" : "white"}>{busy ? "…" : "› "}</Text>
+        <Text color={busy ? "gray" : "white"}>{busy ? `${spinnerGlyph(spinnerIndex)} ` : "› "}</Text>
         <TextInput value={input} onChange={updateInput} onSubmit={submitInput} focus={!busy && !paletteOpen} />
       </Box>
     </Box>
@@ -451,14 +471,38 @@ function modelToolCallText(call: ModelToolCall): string {
   return `<chorus_tool_call>${JSON.stringify({ tool: call.name, params: call.params })}</chorus_tool_call>`;
 }
 
-function agentActivityText(toolName: string): string {
-  if (toolName === "read") return "agent is reading context...";
-  if (toolName === "search") return "agent is searching context...";
-  if (toolName === "list") return "agent is checking files...";
-  if (toolName === "memory") return "agent is recalling memory...";
-  if (toolName === "bash") return "agent is running a guarded command...";
-  if (toolName === "opencode") return "agent is asking OpenCode...";
-  return "agent is using an internal tool...";
+export function spinnerGlyph(index: number): string {
+  return spinnerFrames[Math.abs(index) % spinnerFrames.length] ?? "|";
+}
+
+export function busyStateText(busy: boolean, spinnerIndex: number, label: string): string {
+  return busy ? `${spinnerGlyph(spinnerIndex)} ${label}` : "ready";
+}
+
+export function toolCallActivityText(call: ModelToolCall): string {
+  const params = summarizeToolParams(call.params);
+  return `agent tool call: ${call.name}${params ? ` ${params}` : ""}`;
+}
+
+function toolResultActivityText(call: ModelToolCall, result: ToolResult): string {
+  return `agent tool result: ${call.name} ${result.status} - ${clip(result.summary, 220)}`;
+}
+
+function summarizeToolParams(params: unknown): string {
+  const json = JSON.stringify(redactSensitive(params));
+  if (!json || json === "{}") return "";
+  return clip(json, 220);
+}
+
+function redactSensitive(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => redactSensitive(item));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => {
+    if (/(api[_-]?key|token|secret|password|authorization)/iu.test(key)) {
+      return [key, "[redacted]"];
+    }
+    return [key, redactSensitive(item)];
+  }));
 }
 
 function compactToolResult(result: { status: string; summary: string; data?: unknown; error?: string; risk?: string }) {

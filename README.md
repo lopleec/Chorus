@@ -48,7 +48,7 @@ Open the main bordered TUI:
 pnpm dev tui
 ```
 
-Type in the bottom chat box and press Enter to talk. Provider responses stream into the conversation when the selected provider supports streaming, and basic Markdown from agent replies is rendered for headings, lists, quotes, code blocks, and links. Type `/` to open the command palette, use the up/down arrow keys, then press Enter. When the command palette is closed, use up/down, PageUp/PageDown, or terminal mouse wheel events to scroll the conversation. Mouse wheel support depends on the terminal sending SGR mouse events, and those mouse reports are filtered from the input box.
+Type in the bottom chat box and press Enter to talk. Provider responses stream into the conversation when the selected provider supports streaming, the status line shows a small spinner while the model is thinking, and basic Markdown from agent replies is rendered for headings, lists, quotes, code blocks, and links. Type `/` to open the command palette, use the up/down arrow keys, then press Enter. When the command palette is closed, use up/down, PageUp/PageDown, or terminal mouse wheel events to scroll the conversation. Mouse wheel support depends on the terminal sending SGR mouse events, and those mouse reports are filtered from the input box.
 
 TUI slash commands are UI controls only. Agent tools are not exposed as user commands:
 
@@ -67,7 +67,7 @@ You can also paste a local absolute path into normal chat and ask about its cont
 
 Chorus sends that to the model in the normal chat loop. If the model requests `read`, the tool gateway executes it, returns the file data to the model, and the model answers. For obvious file-path prompts, Chorus also has a fallback that routes the `read` result back to the model instead of dumping raw file content directly into the chat.
 
-The TUI lets the model request tools during normal chat through a small provider-neutral tool-call protocol. When the model asks for a tool, Chorus executes it through the same `ToolGateway`, shows a compact tool event in the conversation, and sends the result back to the model for the final answer.
+The TUI lets the model request tools during normal chat through a small provider-neutral tool-call protocol. When the model asks for a tool, Chorus executes it through the same `ToolGateway`, shows the exact tool name plus a redacted parameter summary and result status in the conversation, and sends the result back to the model for the final answer.
 
 It saves settings to:
 
@@ -290,7 +290,7 @@ Expected result:
 
 ```text
 7 test files passed
-25 tests passed
+26 tests passed
 ```
 
 Node may print an experimental warning for `node:sqlite` on Node 23. The warning is expected and does not indicate a failing check.

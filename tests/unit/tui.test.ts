@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  busyStateText,
   detectReadIntent,
   extractAbsolutePaths,
   extractModelToolCall,
   isKnownSlashCommandInput,
   markdownLines,
   mouseWheelDelta,
+  spinnerGlyph,
   stripMouseReports,
+  toolCallActivityText,
   wrapDisplay
 } from "../../src/tui/main-app.js";
 
@@ -68,5 +71,15 @@ describe("TUI command routing helpers", () => {
       { text: "const x = 1", style: "code" },
       { text: "---", style: "code" }
     ]);
+  });
+
+  it("formats thinking spinner and explicit agent tool events", () => {
+    expect(spinnerGlyph(1)).toBe("/");
+    expect(busyStateText(true, 2, "model thinking")).toBe("- model thinking");
+    expect(busyStateText(false, 2, "model thinking")).toBe("ready");
+    expect(toolCallActivityText({
+      name: "read",
+      params: { path: "README.md", apiKey: "secret" }
+    })).toBe('agent tool call: read {"path":"README.md","apiKey":"[redacted]"}');
   });
 });
