@@ -16,6 +16,20 @@ describe("provider registry", () => {
     expect(response.text).toBe("mock:ping");
   });
 
+  it("streams mock provider text through the registry", async () => {
+    const registry = new ProviderRegistry("mock");
+    registry.register(new MockProvider());
+
+    let text = "";
+    for await (const chunk of registry.streamText({
+      messages: [{ role: "user", content: "stream" }]
+    })) {
+      text += chunk.text;
+    }
+
+    expect(text).toBe("mock:stream");
+  });
+
   it("validates missing provider API keys clearly", () => {
     const config = readProviderEnv({ CHORUS_PROVIDER: "openai" });
     expect(() => requireProviderEnv(config)).toThrow("Missing OPENAI_API_KEY");

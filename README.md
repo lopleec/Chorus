@@ -48,7 +48,7 @@ Open the main bordered TUI:
 pnpm dev tui
 ```
 
-Type in the bottom chat box and press Enter to talk. Type `/` to open the command palette, use the up/down arrow keys, then press Enter. When the command palette is closed, use up/down or PageUp/PageDown to scroll the conversation.
+Type in the bottom chat box and press Enter to talk. Provider responses stream into the conversation when the selected provider supports streaming. Type `/` to open the command palette, use the up/down arrow keys, then press Enter. When the command palette is closed, use up/down, PageUp/PageDown, or terminal mouse wheel events to scroll the conversation. Mouse wheel support depends on the terminal sending SGR mouse events.
 
 Useful TUI commands:
 
@@ -75,9 +75,9 @@ You can also paste a local absolute path into normal chat and ask about its cont
 /Users/luccazh/Documents/Programing☕️/Chorus/Plan_总结.md 这个文件有什么内容
 ```
 
-Chorus detects that as a file-read request and calls the `read` tool instead of letting the model only talk about reading it.
+Chorus sends that to the model in the normal chat loop. If the model requests `read`, the tool gateway executes it, returns the file data to the model, and the model answers. For obvious file-path prompts, Chorus also has a fallback that routes the `read` result back to the model instead of dumping raw file content directly into the chat.
 
-The TUI also lets the model request tools during normal chat through a small provider-neutral tool-call protocol. When the model asks for a tool, Chorus executes it through the same `ToolGateway`, shows the result in the conversation, and sends the result back to the model for the final answer.
+The TUI lets the model request tools during normal chat through a small provider-neutral tool-call protocol. When the model asks for a tool, Chorus executes it through the same `ToolGateway`, shows a compact tool event in the conversation, and sends the result back to the model for the final answer.
 
 It saves settings to:
 
@@ -300,7 +300,7 @@ Expected result:
 
 ```text
 7 test files passed
-22 tests passed
+24 tests passed
 ```
 
 Node may print an experimental warning for `node:sqlite` on Node 23. The warning is expected and does not indicate a failing check.

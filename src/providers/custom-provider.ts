@@ -2,7 +2,7 @@ import { AnthropicProvider } from "./anthropic-provider.js";
 import { GeminiProvider } from "./gemini-provider.js";
 import { OpenAIProvider } from "./openai-provider.js";
 import type { CustomProviderSettings } from "../config/settings.js";
-import type { ProviderRequest, ProviderResponse, TextProvider } from "../core/types.js";
+import type { ProviderRequest, ProviderResponse, ProviderStreamChunk, TextProvider } from "../core/types.js";
 
 export class CustomProvider implements TextProvider {
   readonly id: string;
@@ -41,5 +41,18 @@ export class CustomProvider implements TextProvider {
       ...request,
       model: request.model ?? this.settings.models[0]
     });
+  }
+
+  async *streamText(request: ProviderRequest): AsyncIterable<ProviderStreamChunk> {
+    const next = {
+      ...request,
+      model: request.model ?? this.settings.models[0]
+    };
+    if (this.delegate.streamText) {
+      yield* this.delegate.streamText(next);
+      return;
+    }
+    const response = await this.delegate.generateText(next);
+    yield { text: response.text, raw: response.raw, usage: response.usage, done: true };
   }
 }

@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { ProviderRequest, ProviderResponse, TextProvider } from "../core/types.js";
+import type { ProviderRequest, ProviderResponse, ProviderStreamChunk, TextProvider } from "../core/types.js";
 
 export interface AnthropicProviderOptions {
   apiKey: string;
@@ -16,6 +16,39 @@ export class AnthropicProvider implements TextProvider {
   }
 
   async generateText(request: ProviderRequest): Promise<ProviderResponse> {
+    const body = this.createBody(request);
+    const response = await this.client.messages.create(body);
+
+    const text = response.content
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join("");
+
+    return {
+      text,
+      raw: response,
+      usage: response.usage
+    };
+  }
+
+  async *streamText(request: ProviderRequest): AsyncIterable<ProviderStreamChunk> {
+    const stream = await this.client.messages.create({
+      ...this.createBody(request),
+      stream: true
+    });
+
+    for await (const event of stream) {
+      if (event.type === "content_block_delta" && event.delta.type === "text_delta" && event.delta.text) {
+        yield { text: event.delta.text, raw: event };
+      }
+      if (event.type === "message_delta") {
+        yield { text: "", raw: event, usage: event.usage };
+      }
+    }
+    yield { text: "", done: true };
+  }
+
+  private createBody(request: ProviderRequest) {
     const system = request.messages
       .filter((message) => message.role === "system")
       .map((message) => message.content)
@@ -27,23 +60,12 @@ export class AnthropicProvider implements TextProvider {
         content: message.content
       }));
 
-    const response = await this.client.messages.create({
+    return {
       model: request.model ?? this.options.defaultModel ?? "claude-3-5-haiku-latest",
       max_tokens: request.maxTokens ?? 1024,
       temperature: request.temperature,
       system: system || undefined,
       messages
-    });
-
-    const text = response.content
-      .filter((block) => block.type === "text")
-      .map((block) => block.text)
-      .join("");
-
-    return {
-      text,
-      raw: response,
-      usage: response.usage
     };
   }
 }

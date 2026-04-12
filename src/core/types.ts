@@ -152,7 +152,15 @@ export interface ProviderResponse {
   usage?: unknown;
 }
 
+export interface ProviderStreamChunk {
+  text: string;
+  raw?: unknown;
+  usage?: unknown;
+  done?: boolean;
+}
+
 export interface TextProvider {
   id: ProviderId;
   generateText(request: ProviderRequest): Promise<ProviderResponse>;
+  streamText?(request: ProviderRequest): AsyncIterable<ProviderStreamChunk>;
 }

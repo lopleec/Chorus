@@ -1,4 +1,4 @@
-import type { ProviderId, ProviderRequest, ProviderResponse, TextProvider } from "../core/types.js";
+import type { ProviderId, ProviderRequest, ProviderResponse, ProviderStreamChunk, TextProvider } from "../core/types.js";
 import type { ProviderEnvConfig } from "../config/env.js";
 import type { ChorusSettings } from "../config/settings.js";
 import { requireProviderEnv } from "../config/env.js";
@@ -107,5 +107,15 @@ export class ProviderRegistry {
 
   async generateText(request: ProviderRequest, provider?: ProviderId): Promise<ProviderResponse> {
     return this.get(provider).generateText(request);
+  }
+
+  async *streamText(request: ProviderRequest, provider?: ProviderId): AsyncIterable<ProviderStreamChunk> {
+    const target = this.get(provider);
+    if (target.streamText) {
+      yield* target.streamText(request);
+      return;
+    }
+    const response = await target.generateText(request);
+    yield { text: response.text, raw: response.raw, usage: response.usage, done: true };
   }
 }

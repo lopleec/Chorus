@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectReadIntent, extractAbsolutePaths, extractModelToolCall, isKnownSlashCommandInput, wrapDisplay } from "../../src/tui/main-app.js";
+import { detectReadIntent, extractAbsolutePaths, extractModelToolCall, isKnownSlashCommandInput, mouseWheelDelta, wrapDisplay } from "../../src/tui/main-app.js";
 
 describe("TUI command routing helpers", () => {
   it("detects Chinese file-content questions as read tool intents", () => {
@@ -41,5 +41,10 @@ describe("TUI command routing helpers", () => {
 
     expect(lines.length).toBeGreaterThan(1);
     expect(lines.every((line) => line.length <= 18)).toBe(true);
+  });
+
+  it("parses terminal mouse wheel sequences", () => {
+    expect(mouseWheelDelta("\u001b[<64;10;10M")).toBe(3);
+    expect(mouseWheelDelta("\u001b[<65;10;10M")).toBe(-3);
   });
 });

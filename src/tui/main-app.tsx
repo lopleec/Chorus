@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import SelectInput from "ink-select-input";
 import TextInput from "ink-text-input";
@@ -6,6 +6,7 @@ import type { ProviderMessage, ToolContext, ToolResult } from "../core/types.js"
 import type { ChorusRuntime } from "../runtime/create-runtime.js";
 
 interface TuiMessage {
+  id: string;
   from: "user" | "chorus" | "system" | "tool";
   text: string;
 }
@@ -88,8 +89,11 @@ const maxModelToolTurns = 4;
 export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
   const app = useApp();
   const terminal = useTerminalSize();
+  useMouseWheelReporting();
+  const messageCounter = useRef(0);
   const [messages, setMessages] = useState<TuiMessage[]>([
     {
+      id: "initial",
       from: "chorus",
       text: "Ready. Ask naturally, paste a file path, or type / for commands."
     }
@@ -104,6 +108,8 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
   const innerWidth = Math.max(24, frameWidth - 4);
   const paletteLimit = clamp(4, terminal.rows - 14, 8);
   const viewportHeight = Math.max(6, terminal.rows - (paletteOpen ? paletteLimit + 12 : 9));
+  const activeProvider = process.env.CHORUS_PROVIDER ?? runtime.settings.provider;
+  const activeModel = process.env.CHORUS_MODEL ?? runtime.settings.model;
 
   const monitor = useMemo(() => {
     const tasks = runtime.scheduler.listTasks();
@@ -135,12 +141,28 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
     setScrollOffset(0);
   };
 
+  const pushMessage = (from: TuiMessage["from"], text: string): string => {
+    const id = `msg-${Date.now()}-${messageCounter.current++}`;
+    addMessage({ id, from, text });
+    return id;
+  };
+
+  const updateMessage = (id: string, text: string) => {
+    setMessages((current) => current.map((message) => message.id === id ? { ...message, text } : message));
+    setScrollOffset(0);
+  };
+
   const close = () => {
     onExit();
     app.exit();
   };
 
   useInput((char, key) => {
+    const wheelDelta = mouseWheelDelta(char);
+    if (!paletteOpen && !busy && wheelDelta !== 0) {
+      setScrollOffset((offset) => Math.max(0, Math.min(maxScroll, offset + wheelDelta)));
+      return;
+    }
     if (key.escape && paletteOpen) {
       setPaletteOpen(false);
       setInput("");
@@ -202,7 +224,7 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
   const submitInput = async (value: string) => {
     const trimmed = value.trim();
     if (!trimmed) return;
-    addMessage({ from: "user", text: trimmed });
+    pushMessage("user", trimmed);
     setInput("");
     setPaletteOpen(false);
     setBusy(true);
@@ -212,15 +234,9 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
         return;
       }
 
-      const readIntent = detectReadIntent(trimmed);
-      if (readIntent) {
-        await runRead(readIntent.paths);
-        return;
-      }
-
       await askProviderWithTools(trimmed);
     } catch (error) {
-      addMessage({ from: "system", text: `Error: ${(error as Error).message}` });
+      pushMessage("system", `Error: ${(error as Error).message}`);
     } finally {
       setBusy(false);
       setRefresh((value) => value + 1);
@@ -230,14 +246,14 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
   const runSlashCommand = async (raw: string) => {
     const command = parseSlashCommand(raw);
     if (!command) {
-      addMessage({ from: "system", text: "Type / to choose a command, or /help to list them." });
+      pushMessage("system", "Type / to choose a command, or /help to list them.");
       return;
     }
 
     switch (command.name) {
       case "ask":
         if (!command.args) {
-          addMessage({ from: "system", text: "Usage: /ask <message>" });
+          pushMessage("system", "Usage: /ask <message>");
           return;
         }
         await askProviderWithTools(command.args);
@@ -250,28 +266,28 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
         return;
       case "search":
         if (!command.args) {
-          addMessage({ from: "system", text: "Usage: /search <text>" });
+          pushMessage("system", "Usage: /search <text>");
           return;
         }
         await runTool("search", { path: ".", query: command.args, depth: 4, maxResults: 25 });
         return;
       case "memory":
         if (!command.args) {
-          addMessage({ from: "system", text: "Usage: /memory <keyword>" });
+          pushMessage("system", "Usage: /memory <keyword>");
           return;
         }
         await runTool("memory", { action: "search", keyword: command.args, topK: 5 });
         return;
       case "opencode":
         if (!command.args) {
-          addMessage({ from: "system", text: "Usage: /opencode <message>" });
+          pushMessage("system", "Usage: /opencode <message>");
           return;
         }
         await runTool("opencode", { message: command.args, cwd: process.cwd() });
         return;
       case "bash":
         if (!command.args) {
-          addMessage({ from: "system", text: "Usage: /bash <command>" });
+          pushMessage("system", "Usage: /bash <command>");
           return;
         }
         await runTool("bash", { command: command.args, cwd: process.cwd() });
@@ -280,59 +296,56 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
         await runGenericTool(command.args);
         return;
       case "tools":
-        addMessage({
-          from: "tool",
-          text: monitor.tools.map((tool) => `${tool.name} - ${tool.description}`).join("\n")
-        });
+        pushMessage("tool", monitor.tools.map((tool) => `${tool.name} - ${tool.description}`).join("\n"));
         return;
       case "subagents":
-        addMessage({
-          from: "tool",
-          text: monitor.agents.length
+        pushMessage(
+          "tool",
+          monitor.agents.length
             ? monitor.agents.map((agent) => `${agent.id}: ${agent.status} - ${agent.brief.goal}`).join("\n")
             : "No sub-agents yet."
-        });
+        );
         return;
       case "status":
-        addMessage({ from: "tool", text: statusLine(runtime, monitor.tasks.length, monitor.agents.length, monitor.tools.length) });
+        pushMessage("tool", statusLine(activeProvider, monitor.tasks.length, monitor.agents.length, monitor.tools.length));
         return;
       case "kill": {
         const stopped = runtime.subAgentManager.stop("global", undefined, "TUI /kill command");
-        addMessage({ from: "tool", text: `Stopped ${stopped} sub-agent(s).` });
+        pushMessage("tool", `Stopped ${stopped} sub-agent(s).`);
         return;
       }
       case "help":
-        addMessage({ from: "tool", text: commandItems.map((item) => item.label).join("\n") });
+        pushMessage("tool", commandItems.map((item) => item.label).join("\n"));
         return;
       case "quit":
         close();
         return;
       default:
-        addMessage({ from: "system", text: `Unknown command /${command.name}. Type /help for commands.` });
+        pushMessage("system", `Unknown command /${command.name}. Type /help for commands.`);
     }
   };
 
   const askProviderWithTools = async (prompt: string) => {
     const providerMessages = providerConversation(messages, prompt, runtime.toolGateway.list().map((tool) => tool.name));
+    const obviousRead = detectReadIntent(prompt);
 
     for (let turn = 0; turn < maxModelToolTurns; turn += 1) {
-      const response = await runtime.providerRegistry.generateText({
-        messages: providerMessages,
-        model: runtime.settings.model,
-        maxTokens: 1200
-      });
-      const toolCall = extractModelToolCall(response.text);
+      const responseText = await streamProviderTurn(providerMessages, turn === 0 && Boolean(obviousRead));
+      const toolCall = extractModelToolCall(responseText)
+        ?? (turn === 0 && obviousRead ? readIntentToToolCall(obviousRead) : undefined);
       if (!toolCall) {
-        addMessage({ from: "chorus", text: stripModelToolCall(response.text) || "(empty response)" });
+        if (!responseText.trim()) {
+          pushMessage("chorus", "(empty response)");
+        }
         return;
       }
 
-      addMessage({ from: "tool", text: `model -> ${toolCall.name} ${clip(JSON.stringify(toolCall.params), 600)}` });
+      pushMessage("tool", `${toolCall.name} ${clip(JSON.stringify(toolCall.params), 600)}`);
       const result = await runtime.toolGateway.execute(toolCall.name, toolCall.params, toolContext());
-      const formatted = formatToolResult(toolCall.name, result);
-      addMessage({ from: result.status === "ok" ? "tool" : "system", text: formatted });
-
-      providerMessages.push({ role: "assistant", content: response.text });
+      providerMessages.push({
+        role: "assistant",
+        content: responseText.trim() || modelToolCallText(toolCall)
+      });
       providerMessages.push({
         role: "user",
         content: [
@@ -341,14 +354,35 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
           "Now continue. If another tool is needed, emit one more <chorus_tool_call> JSON block. Otherwise answer normally."
         ].join("\n")
       });
+      continue;
     }
 
-    addMessage({ from: "system", text: `Stopped after ${maxModelToolTurns} model-requested tool call(s) to avoid a loop.` });
+    pushMessage("system", `Stopped after ${maxModelToolTurns} model-requested tool call(s) to avoid a loop.`);
+  };
+
+  const streamProviderTurn = async (providerMessages: ProviderMessage[], suppressVisible = false): Promise<string> => {
+    let id: string | undefined;
+    let buffer = "";
+    for await (const chunk of runtime.providerRegistry.streamText({
+        messages: providerMessages,
+        model: runtime.settings.model,
+        maxTokens: 1200
+      })) {
+      buffer += chunk.text;
+      if (!suppressVisible && shouldShowStream(buffer)) {
+        id ??= pushMessage("chorus", "");
+        updateMessage(id, stripModelToolCall(buffer));
+      }
+    }
+    if (!suppressVisible && !id && !extractModelToolCall(buffer) && buffer.trim()) {
+      pushMessage("chorus", stripModelToolCall(buffer));
+    }
+    return buffer;
   };
 
   const runRead = async (paths: string[]) => {
     if (paths.length === 0) {
-      addMessage({ from: "system", text: "Usage: /read <path>" });
+      pushMessage("system", "Usage: /read <path>");
       return;
     }
     await runTool("read", paths.length === 1 ? { path: paths[0] } : { paths });
@@ -356,13 +390,13 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
 
   const runTool = async (name: string, params: unknown) => {
     const result = await runtime.toolGateway.execute(name, params, toolContext());
-    addMessage({ from: result.status === "ok" ? "tool" : "system", text: formatToolResult(name, result) });
+    pushMessage(result.status === "ok" ? "tool" : "system", formatToolResult(name, result));
   };
 
   const runGenericTool = async (args: string) => {
     const [name, jsonRaw] = splitFirstWord(args);
     if (!name) {
-      addMessage({ from: "system", text: "Usage: /tool <name> <json-params>" });
+      pushMessage("system", "Usage: /tool <name> <json-params>");
       return;
     }
     let params: unknown = {};
@@ -370,7 +404,7 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
       try {
         params = JSON.parse(jsonRaw);
       } catch (error) {
-        addMessage({ from: "system", text: `Invalid JSON params: ${(error as Error).message}` });
+        pushMessage("system", `Invalid JSON params: ${(error as Error).message}`);
         return;
       }
     }
@@ -387,7 +421,7 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
     <Box flexDirection="column" paddingX={1} width={frameWidth + 2} overflow="hidden">
       <Box width={frameWidth} borderStyle="single" borderColor="gray" paddingX={1} flexDirection="column" marginBottom={1}>
         <Text bold>› Chorus <Text dimColor>(v0.1.0)</Text></Text>
-        <Text dimColor>model: <Text color="white">{runtime.settings.model ?? "(default)"}</Text>  provider: <Text color="cyan">{runtime.settings.provider}</Text></Text>
+        <Text dimColor>model: <Text color="white">{activeModel ?? "(default)"}</Text>  provider: <Text color="cyan">{activeProvider}</Text></Text>
         <Text dimColor>directory: {truncateDisplay(process.cwd(), Math.max(12, innerWidth - 11))}</Text>
       </Box>
 
@@ -400,7 +434,7 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
       </Box>
 
       <Box width={frameWidth} minHeight={1}>
-        <Text dimColor>{statusLine(runtime, monitor.tasks.length, monitor.agents.length, monitor.tools.length)} | {busy ? "busy" : "ready"} | {scrollHint(normalizedScroll, maxScroll)}</Text>
+        <Text dimColor>{statusLine(activeProvider, monitor.tasks.length, monitor.agents.length, monitor.tools.length)} | {busy ? "busy" : "ready"} | {scrollHint(normalizedScroll, maxScroll)}</Text>
       </Box>
 
       {paletteOpen ? (
@@ -440,6 +474,16 @@ function useTerminalSize(): TerminalSize {
   return size;
 }
 
+function useMouseWheelReporting(): void {
+  const { stdout } = useStdout();
+  useEffect(() => {
+    stdout.write("\x1b[?1000h\x1b[?1006h");
+    return () => {
+      stdout.write("\x1b[?1000l\x1b[?1006l");
+    };
+  }, [stdout]);
+}
+
 function providerConversation(messages: TuiMessage[], prompt: string, toolNames: string[]): ProviderMessage[] {
   return [
     {
@@ -449,6 +493,8 @@ function providerConversation(messages: TuiMessage[], prompt: string, toolNames:
         "You may request local tools when needed. To call one tool, respond with exactly one JSON object inside these tags and no other prose:",
         '<chorus_tool_call>{"tool":"read","params":{"path":"/absolute/or/relative/path"}}</chorus_tool_call>',
         `Available tools: ${toolNames.join(", ")}.`,
+        "Useful params: read {path} or {paths}; list {path, depth}; search {path, query, depth, maxResults}; memory {action:'search', keyword, topK}; bash {command, cwd}.",
+        "If the user includes a local file path and asks what it contains, asks for a summary, or provides only a path, you must call read before answering.",
         "Use read/list/search/memory for information gathering. Use bash only for harmless commands. Never say you will use a tool unless you emit the tool-call block.",
         "After a tool result is returned, answer normally unless another tool is required."
       ].join("\n")
@@ -485,6 +531,23 @@ function looksLikeToolCallJson(text: string): boolean {
 
 function stripModelToolCall(text: string): string {
   return text.replace(toolCallTagPattern, "").trim();
+}
+
+function shouldShowStream(buffer: string): boolean {
+  const trimmed = buffer.trimStart();
+  if (!trimmed) return false;
+  return !"<chorus_tool_call>".startsWith(trimmed) && !trimmed.startsWith("<chorus_tool_call>");
+}
+
+function readIntentToToolCall(intent: ReadIntent): ModelToolCall {
+  return {
+    name: "read",
+    params: intent.paths.length === 1 ? { path: intent.paths[0] } : { paths: intent.paths }
+  };
+}
+
+function modelToolCallText(call: ModelToolCall): string {
+  return `<chorus_tool_call>${JSON.stringify({ tool: call.name, params: call.params })}</chorus_tool_call>`;
 }
 
 function compactToolResult(result: ToolResult): ToolResult {
@@ -550,6 +613,18 @@ function cleanPath(path: string): string {
 export function isKnownSlashCommandInput(text: string): boolean {
   const command = parseSlashCommand(text);
   return Boolean(command && commandNameSet.has(command.name));
+}
+
+export function mouseWheelDelta(input: string): number {
+  let delta = 0;
+  for (const match of input.matchAll(/\x1b\[<(\d+);\d+;\d+[mM]/gu)) {
+    const button = Number.parseInt(match[1] ?? "", 10);
+    if (!Number.isFinite(button) || button < 64) continue;
+    const direction = (button - 64) % 4;
+    if (direction === 0) delta += 3;
+    if (direction === 1) delta -= 3;
+  }
+  return delta;
 }
 
 function isSlashCommandPrefix(text: string): boolean {
@@ -691,8 +766,8 @@ function prefix(from: TuiMessage["from"]): string {
   return "chorus:";
 }
 
-function statusLine(runtime: ChorusRuntime, tasks: number, agents: number, tools: number): string {
-  return `tasks ${tasks} | sub-agents ${agents} | tools ${tools} | ${runtime.settings.provider}`;
+function statusLine(provider: string, tasks: number, agents: number, tools: number): string {
+  return `tasks ${tasks} | sub-agents ${agents} | tools ${tools} | ${provider}`;
 }
 
 function scrollHint(scrollOffset: number, maxScroll: number): string {

@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { Agent as HttpsAgent } from "node:https";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
-import type { ProviderRequest, ProviderResponse, TextProvider } from "../core/types.js";
+import type { ProviderRequest, ProviderResponse, ProviderStreamChunk, TextProvider } from "../core/types.js";
 
 export interface OpenAIProviderOptions {
   apiKey: string;
@@ -41,6 +41,32 @@ export class OpenAIProvider implements TextProvider {
         raw: response,
         usage: response.usage
       };
+    } catch (error) {
+      throw enrichProviderError(error, this.options.providerName ?? this.id, this.options.baseURL, model);
+    }
+  }
+
+  async *streamText(request: ProviderRequest): AsyncIterable<ProviderStreamChunk> {
+    const model = request.model ?? this.options.defaultModel ?? "gpt-4o-mini";
+    try {
+      const stream = await this.client.chat.completions.create({
+        model,
+        messages: request.messages.map((message) => ({
+          role: message.role,
+          content: message.content
+        })) as ChatCompletionMessageParam[],
+        temperature: request.temperature,
+        max_tokens: request.maxTokens,
+        stream: true
+      });
+
+      for await (const chunk of stream) {
+        const text = chunk.choices[0]?.delta?.content ?? "";
+        if (text) {
+          yield { text, raw: chunk };
+        }
+      }
+      yield { text: "", done: true };
     } catch (error) {
       throw enrichProviderError(error, this.options.providerName ?? this.id, this.options.baseURL, model);
     }
