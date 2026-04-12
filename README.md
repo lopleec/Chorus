@@ -2,7 +2,7 @@
 
 Chorus is a local-first macOS agent core with a CLI, TUI onboarding, provider routing, tool gateway, sub-agent scheduler, persistent memory, operation logs, and a first pass at the built-in tool set.
 
-This repository currently implements the kernel and command-line workflow. The full chat TUI is not the main surface yet; the implemented TUI piece is onboarding.
+This repository currently implements the kernel, command-line workflow, onboarding TUI, and a lightweight chat TUI with slash commands.
 
 ## Requirements
 
@@ -48,7 +48,34 @@ Open the main bordered TUI:
 pnpm dev tui
 ```
 
-Type in the bottom chat box and press Enter to talk. Press Tab to focus the menu, then use the up/down arrow keys and Enter to run menu actions. Press `q` while the menu is focused to quit.
+Type in the bottom chat box and press Enter to talk. Type `/` to open the command palette, use the up/down arrow keys, then press Enter.
+
+Useful TUI commands:
+
+```text
+/read <path>        read a file with the read tool
+/list [path]        list files
+/search <text>      search files under the current folder
+/memory <keyword>   search long-term memory
+/opencode <msg>     run opencode run [message]
+/bash <command>     run a guarded shell command
+/tool <name> <json> run any registered tool
+/tools              list tools
+/subagents          list sub-agents
+/status             show runtime status
+/kill               stop all sub-agents
+/help               show commands
+/ask <message>      force provider chat
+/quit               quit
+```
+
+You can also paste a local absolute path into normal chat and ask about its content. For example:
+
+```text
+/Users/luccazh/Documents/Programing☕️/Chorus/Plan_总结.md 这个文件有什么内容
+```
+
+Chorus detects that as a file-read request and calls the `read` tool instead of letting the model only talk about reading it.
 
 It saves settings to:
 
@@ -120,6 +147,8 @@ Then call it with:
 ```bash
 pnpm dev ask --provider local-openai --model qwen2.5-coder:32b "hello"
 ```
+
+If a trusted custom HTTPS gateway fails with `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`, either fix the server certificate chain or set `"allowInsecureTls": true` for that one custom provider. Keep it `false` for normal public API endpoints.
 
 For local testing without network calls:
 
@@ -268,8 +297,8 @@ pnpm check
 Expected result:
 
 ```text
-6 test files passed
-16 tests passed
+7 test files passed
+19 tests passed
 ```
 
 Node may print an experimental warning for `node:sqlite` on Node 23. The warning is expected and does not indicate a failing check.
