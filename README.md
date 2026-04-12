@@ -50,22 +50,12 @@ pnpm dev tui
 
 Type in the bottom chat box and press Enter to talk. Provider responses stream into the conversation when the selected provider supports streaming. Type `/` to open the command palette, use the up/down arrow keys, then press Enter. When the command palette is closed, use up/down, PageUp/PageDown, or terminal mouse wheel events to scroll the conversation. Mouse wheel support depends on the terminal sending SGR mouse events.
 
-Useful TUI commands:
+TUI slash commands are UI controls only. Agent tools are not exposed as user commands:
 
 ```text
-/read <path>        read a file with the read tool
-/list [path]        list files
-/search <text>      search files under the current folder
-/memory <keyword>   search long-term memory
-/opencode <msg>     run opencode run [message]
-/bash <command>     run a guarded shell command
-/tool <name> <json> run any registered tool
-/tools              list tools
-/subagents          list sub-agents
 /status             show runtime status
-/kill               stop all sub-agents
+/clear              clear conversation
 /help               show commands
-/ask <message>      force provider chat
 /quit               quit
 ```
 

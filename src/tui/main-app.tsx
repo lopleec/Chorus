@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import SelectInput from "ink-select-input";
 import TextInput from "ink-text-input";
-import type { ProviderMessage, ToolContext, ToolResult } from "../core/types.js";
+import type { ProviderMessage, ToolContext } from "../core/types.js";
 import type { ChorusRuntime } from "../runtime/create-runtime.js";
 
 interface TuiMessage {
@@ -22,18 +22,8 @@ interface CommandItem {
 }
 
 type SlashCommandName =
-  | "ask"
-  | "read"
-  | "list"
-  | "search"
-  | "memory"
-  | "opencode"
-  | "bash"
-  | "tool"
-  | "tools"
-  | "subagents"
   | "status"
-  | "kill"
+  | "clear"
   | "help"
   | "quit";
 
@@ -63,41 +53,32 @@ export interface MainTuiAppProps {
 }
 
 const commandItems: CommandItem[] = [
-  { label: "/read <path>        read a file", value: "read" },
-  { label: "/list [path]        list files", value: "list" },
-  { label: "/search <text>      search files", value: "search" },
-  { label: "/memory <keyword>   search memory", value: "memory" },
-  { label: "/opencode <msg>     opencode run [message]", value: "opencode" },
-  { label: "/bash <command>     guarded shell", value: "bash" },
-  { label: "/tool <name> <json> run any tool", value: "tool" },
-  { label: "/tools              list tools", value: "tools" },
-  { label: "/subagents          list sub-agents", value: "subagents" },
   { label: "/status             show status", value: "status" },
-  { label: "/kill               stop sub-agents", value: "kill" },
+  { label: "/clear              clear conversation", value: "clear" },
   { label: "/help               show commands", value: "help" },
-  { label: "/ask <message>      force chat", value: "ask" },
   { label: "/quit               quit", value: "quit" }
 ];
 
 const commandNameSet = new Set<string>(commandItems.map((item) => item.value));
-const commandsNeedingInput = new Set<SlashCommandName>(["ask", "read", "list", "search", "memory", "opencode", "bash", "tool"]);
 const absolutePathPattern = /(?:\/[^\s"'`<>|，。！？、,;:!?）)\]]+)+/gu;
 const readIntentPattern = /(内容|有什么|看看|看一下|读取|读一下|查看|打开|里面|文件|what.*(content|contain|say)|read|show|open|cat|look)/iu;
 const toolCallTagPattern = /<chorus_tool_call>\s*([\s\S]*?)\s*<\/chorus_tool_call>/iu;
 const maxModelToolTurns = 4;
+
+function initialMessage(): TuiMessage {
+  return {
+    id: "initial",
+    from: "chorus",
+    text: "Ready. Chat naturally. Agent tools are internal. / opens UI commands."
+  };
+}
 
 export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
   const app = useApp();
   const terminal = useTerminalSize();
   useMouseWheelReporting();
   const messageCounter = useRef(0);
-  const [messages, setMessages] = useState<TuiMessage[]>([
-    {
-      id: "initial",
-      from: "chorus",
-      text: "Ready. Ask naturally, paste a file path, or type / for commands."
-    }
-  ]);
+  const [messages, setMessages] = useState<TuiMessage[]>(() => [initialMessage()]);
   const [input, setInput] = useState("");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -214,10 +195,6 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
 
   const chooseCommand = async (item: CommandItem) => {
     setPaletteOpen(false);
-    if (commandsNeedingInput.has(item.value)) {
-      setInput(`/${item.value} `);
-      return;
-    }
     await submitInput(`/${item.value}`);
   };
 
@@ -251,69 +228,13 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
     }
 
     switch (command.name) {
-      case "ask":
-        if (!command.args) {
-          pushMessage("system", "Usage: /ask <message>");
-          return;
-        }
-        await askProviderWithTools(command.args);
-        return;
-      case "read":
-        await runRead(parsePathList(command.args));
-        return;
-      case "list":
-        await runTool("list", { path: command.args || ".", depth: 2 });
-        return;
-      case "search":
-        if (!command.args) {
-          pushMessage("system", "Usage: /search <text>");
-          return;
-        }
-        await runTool("search", { path: ".", query: command.args, depth: 4, maxResults: 25 });
-        return;
-      case "memory":
-        if (!command.args) {
-          pushMessage("system", "Usage: /memory <keyword>");
-          return;
-        }
-        await runTool("memory", { action: "search", keyword: command.args, topK: 5 });
-        return;
-      case "opencode":
-        if (!command.args) {
-          pushMessage("system", "Usage: /opencode <message>");
-          return;
-        }
-        await runTool("opencode", { message: command.args, cwd: process.cwd() });
-        return;
-      case "bash":
-        if (!command.args) {
-          pushMessage("system", "Usage: /bash <command>");
-          return;
-        }
-        await runTool("bash", { command: command.args, cwd: process.cwd() });
-        return;
-      case "tool":
-        await runGenericTool(command.args);
-        return;
-      case "tools":
-        pushMessage("tool", monitor.tools.map((tool) => `${tool.name} - ${tool.description}`).join("\n"));
-        return;
-      case "subagents":
-        pushMessage(
-          "tool",
-          monitor.agents.length
-            ? monitor.agents.map((agent) => `${agent.id}: ${agent.status} - ${agent.brief.goal}`).join("\n")
-            : "No sub-agents yet."
-        );
-        return;
       case "status":
-        pushMessage("tool", statusLine(activeProvider, monitor.tasks.length, monitor.agents.length, monitor.tools.length));
+        pushMessage("tool", statusLine(activeProvider, monitor.tasks.length, monitor.agents.length));
         return;
-      case "kill": {
-        const stopped = runtime.subAgentManager.stop("global", undefined, "TUI /kill command");
-        pushMessage("tool", `Stopped ${stopped} sub-agent(s).`);
+      case "clear":
+        setMessages([initialMessage()]);
+        setScrollOffset(0);
         return;
-      }
       case "help":
         pushMessage("tool", commandItems.map((item) => item.label).join("\n"));
         return;
@@ -340,7 +261,7 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
         return;
       }
 
-      pushMessage("tool", `${toolCall.name} ${clip(JSON.stringify(toolCall.params), 600)}`);
+      pushMessage("tool", agentActivityText(toolCall.name));
       const result = await runtime.toolGateway.execute(toolCall.name, toolCall.params, toolContext());
       providerMessages.push({
         role: "assistant",
@@ -380,37 +301,6 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
     return buffer;
   };
 
-  const runRead = async (paths: string[]) => {
-    if (paths.length === 0) {
-      pushMessage("system", "Usage: /read <path>");
-      return;
-    }
-    await runTool("read", paths.length === 1 ? { path: paths[0] } : { paths });
-  };
-
-  const runTool = async (name: string, params: unknown) => {
-    const result = await runtime.toolGateway.execute(name, params, toolContext());
-    pushMessage(result.status === "ok" ? "tool" : "system", formatToolResult(name, result));
-  };
-
-  const runGenericTool = async (args: string) => {
-    const [name, jsonRaw] = splitFirstWord(args);
-    if (!name) {
-      pushMessage("system", "Usage: /tool <name> <json-params>");
-      return;
-    }
-    let params: unknown = {};
-    if (jsonRaw.trim()) {
-      try {
-        params = JSON.parse(jsonRaw);
-      } catch (error) {
-        pushMessage("system", `Invalid JSON params: ${(error as Error).message}`);
-        return;
-      }
-    }
-    await runTool(name, params);
-  };
-
   const toolContext = (): ToolContext => ({
     actorId: "tui",
     actorRole: "main",
@@ -434,7 +324,7 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
       </Box>
 
       <Box width={frameWidth} minHeight={1}>
-        <Text dimColor>{statusLine(activeProvider, monitor.tasks.length, monitor.agents.length, monitor.tools.length)} | {busy ? "busy" : "ready"} | {scrollHint(normalizedScroll, maxScroll)}</Text>
+        <Text dimColor>{statusLine(activeProvider, monitor.tasks.length, monitor.agents.length)} | {busy ? "busy" : "ready"} | {scrollHint(normalizedScroll, maxScroll)}</Text>
       </Box>
 
       {paletteOpen ? (
@@ -550,7 +440,17 @@ function modelToolCallText(call: ModelToolCall): string {
   return `<chorus_tool_call>${JSON.stringify({ tool: call.name, params: call.params })}</chorus_tool_call>`;
 }
 
-function compactToolResult(result: ToolResult): ToolResult {
+function agentActivityText(toolName: string): string {
+  if (toolName === "read") return "agent is reading context...";
+  if (toolName === "search") return "agent is searching context...";
+  if (toolName === "list") return "agent is checking files...";
+  if (toolName === "memory") return "agent is recalling memory...";
+  if (toolName === "bash") return "agent is running a guarded command...";
+  if (toolName === "opencode") return "agent is asking OpenCode...";
+  return "agent is using an internal tool...";
+}
+
+function compactToolResult(result: { status: string; summary: string; data?: unknown; error?: string; risk?: string }) {
   return {
     status: result.status,
     summary: result.summary,
@@ -647,45 +547,6 @@ function isOnlyPaths(text: string, paths: string[]): boolean {
   return remaining.replace(/[\s，。！？、,;:!?()[\]{}"'`<>|]+/gu, "").length === 0;
 }
 
-function parsePathList(args: string): string[] {
-  const extracted = extractAbsolutePaths(args);
-  if (extracted.length > 0) return extracted;
-  return args.trim() ? [args.trim()] : [];
-}
-
-function formatToolResult(name: string, result: ToolResult): string {
-  if (result.status !== "ok") {
-    return `${result.status}: ${result.summary}${result.error ? `\n${result.error}` : ""}`;
-  }
-  if (name === "read") return formatReadResult(result);
-  if (name === "memory") return formatMemoryResult(result);
-  if (name === "bash") return formatProcessResult("bash", result);
-  if (name === "opencode") return formatProcessResult("opencode", result);
-  return `${result.status}: ${result.summary}${result.data ? `\n${clip(JSON.stringify(result.data, null, 2), 2000)}` : ""}`;
-}
-
-function formatReadResult(result: ToolResult): string {
-  const data = result.data as { files?: Array<{ path: string; content: string }> } | undefined;
-  if (!data?.files?.length) return `${result.status}: ${result.summary}`;
-  return data.files
-    .map((file) => `${file.path}\n${clip(file.content, 6000)}`)
-    .join("\n\n");
-}
-
-function formatMemoryResult(result: ToolResult): string {
-  const data = result.data as { results?: Array<{ score: number; entry: { summary: string; body?: string | null } }> } | undefined;
-  if (!data?.results?.length) return `${result.status}: ${result.summary}`;
-  return data.results
-    .map((item) => `[${item.score.toFixed(1)}] ${item.entry.summary}${item.entry.body ? `\n${clip(item.entry.body, 500)}` : ""}`)
-    .join("\n");
-}
-
-function formatProcessResult(command: string, result: ToolResult): string {
-  const data = result.data as { stdout?: string; stderr?: string } | undefined;
-  const output = [data?.stdout, data?.stderr].filter(Boolean).join("\n").trim();
-  return output ? `${command}: ${result.summary}\n${clip(output, 3000)}` : `${command}: ${result.summary}`;
-}
-
 function flattenMessages(messages: TuiMessage[], width: number): RenderLine[] {
   const lines: RenderLine[] = [];
   for (const message of messages) {
@@ -766,8 +627,8 @@ function prefix(from: TuiMessage["from"]): string {
   return "chorus:";
 }
 
-function statusLine(provider: string, tasks: number, agents: number, tools: number): string {
-  return `tasks ${tasks} | sub-agents ${agents} | tools ${tools} | ${provider}`;
+function statusLine(provider: string, tasks: number, agents: number): string {
+  return `tasks ${tasks} | sub-agents ${agents} | ${provider}`;
 }
 
 function scrollHint(scrollOffset: number, maxScroll: number): string {

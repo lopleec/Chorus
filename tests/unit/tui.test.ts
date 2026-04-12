@@ -19,7 +19,8 @@ describe("TUI command routing helpers", () => {
       kind: "read",
       paths: [text]
     });
-    expect(isKnownSlashCommandInput("/read README.md")).toBe(true);
+    expect(isKnownSlashCommandInput("/read README.md")).toBe(false);
+    expect(isKnownSlashCommandInput("/status")).toBe(true);
   });
 
   it("extracts and cleans absolute paths from chat text", () => {
