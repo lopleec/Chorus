@@ -1,12 +1,17 @@
-import React, { useMemo, useState } from "react";
-import { Box, Text, useApp, useInput } from "ink";
+import React, { useEffect, useMemo, useState } from "react";
+import { Box, Text, useApp, useInput, useStdout } from "ink";
 import SelectInput from "ink-select-input";
 import TextInput from "ink-text-input";
-import type { ToolContext, ToolResult } from "../core/types.js";
+import type { ProviderMessage, ToolContext, ToolResult } from "../core/types.js";
 import type { ChorusRuntime } from "../runtime/create-runtime.js";
 
 interface TuiMessage {
   from: "user" | "chorus" | "system" | "tool";
+  text: string;
+}
+
+interface RenderLine {
+  from: TuiMessage["from"];
   text: string;
 }
 
@@ -41,45 +46,63 @@ interface ReadIntent {
   paths: string[];
 }
 
+interface ModelToolCall {
+  name: string;
+  params: unknown;
+}
+
+interface TerminalSize {
+  columns: number;
+  rows: number;
+}
+
 export interface MainTuiAppProps {
   runtime: ChorusRuntime;
   onExit(): void;
 }
 
 const commandItems: CommandItem[] = [
-  { label: "/read <path>        read a file with the read tool", value: "read" },
+  { label: "/read <path>        read a file", value: "read" },
   { label: "/list [path]        list files", value: "list" },
-  { label: "/search <text>      search files under the current folder", value: "search" },
-  { label: "/memory <keyword>   search long-term memory", value: "memory" },
-  { label: "/opencode <msg>     run opencode run [message]", value: "opencode" },
-  { label: "/bash <command>     run a guarded shell command", value: "bash" },
-  { label: "/tool <name> <json> run any registered tool", value: "tool" },
+  { label: "/search <text>      search files", value: "search" },
+  { label: "/memory <keyword>   search memory", value: "memory" },
+  { label: "/opencode <msg>     opencode run [message]", value: "opencode" },
+  { label: "/bash <command>     guarded shell", value: "bash" },
+  { label: "/tool <name> <json> run any tool", value: "tool" },
   { label: "/tools              list tools", value: "tools" },
   { label: "/subagents          list sub-agents", value: "subagents" },
-  { label: "/status             show runtime status", value: "status" },
-  { label: "/kill               stop all sub-agents", value: "kill" },
+  { label: "/status             show status", value: "status" },
+  { label: "/kill               stop sub-agents", value: "kill" },
   { label: "/help               show commands", value: "help" },
-  { label: "/ask <message>      force provider chat", value: "ask" },
+  { label: "/ask <message>      force chat", value: "ask" },
   { label: "/quit               quit", value: "quit" }
 ];
 
 const commandsNeedingInput = new Set<SlashCommandName>(["ask", "read", "list", "search", "memory", "opencode", "bash", "tool"]);
-
 const absolutePathPattern = /(?:\/[^\s"'`<>|，。！？、,;:!?）)\]]+)+/gu;
 const readIntentPattern = /(内容|有什么|看看|看一下|读取|读一下|查看|打开|里面|文件|what.*(content|contain|say)|read|show|open|cat|look)/iu;
+const toolCallTagPattern = /<chorus_tool_call>\s*([\s\S]*?)\s*<\/chorus_tool_call>/iu;
+const maxModelToolTurns = 4;
 
 export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
   const app = useApp();
+  const terminal = useTerminalSize();
   const [messages, setMessages] = useState<TuiMessage[]>([
     {
       from: "chorus",
-      text: "Chorus is ready. Type normally to chat, paste a file path to read it, or type / to open commands."
+      text: "Ready. Ask naturally, paste a file path, or type / for commands."
     }
   ]);
   const [input, setInput] = useState("");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  const [scrollOffset, setScrollOffset] = useState(0);
+
+  const frameWidth = clamp(48, terminal.columns - 2, 88);
+  const innerWidth = Math.max(24, frameWidth - 4);
+  const paletteLimit = clamp(4, terminal.rows - 14, 8);
+  const viewportHeight = Math.max(6, terminal.rows - (paletteOpen ? paletteLimit + 12 : 9));
 
   const monitor = useMemo(() => {
     const tasks = runtime.scheduler.listTasks();
@@ -92,8 +115,23 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
     };
   }, [runtime, refresh]);
 
+  const visibleCommandItems = useMemo(
+    () => commandItems.map((item) => ({
+      ...item,
+      label: truncateDisplay(item.label, Math.max(20, innerWidth - 4))
+    })),
+    [innerWidth]
+  );
+
+  const messageLines = useMemo(() => flattenMessages(messages, innerWidth), [messages, innerWidth]);
+  const maxScroll = Math.max(0, messageLines.length - viewportHeight);
+  const normalizedScroll = Math.min(scrollOffset, maxScroll);
+  const firstVisibleLine = Math.max(0, messageLines.length - viewportHeight - normalizedScroll);
+  const visibleLines = messageLines.slice(firstVisibleLine, firstVisibleLine + viewportHeight);
+
   const addMessage = (message: TuiMessage) => {
-    setMessages((current) => [...current.slice(-16), message]);
+    setMessages((current) => [...current, message]);
+    setScrollOffset(0);
   };
 
   const close = () => {
@@ -109,6 +147,22 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
     }
     if (key.ctrl && char === "c") {
       close();
+      return;
+    }
+    if (!paletteOpen && !busy && key.upArrow) {
+      setScrollOffset((offset) => Math.min(maxScroll, offset + 1));
+      return;
+    }
+    if (!paletteOpen && !busy && key.downArrow) {
+      setScrollOffset((offset) => Math.max(0, offset - 1));
+      return;
+    }
+    if (!paletteOpen && !busy && key.pageUp) {
+      setScrollOffset((offset) => Math.min(maxScroll, offset + viewportHeight));
+      return;
+    }
+    if (!paletteOpen && !busy && key.pageDown) {
+      setScrollOffset((offset) => Math.max(0, offset - viewportHeight));
     }
   });
 
@@ -151,7 +205,7 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
         return;
       }
 
-      await askProvider(trimmed);
+      await askProviderWithTools(trimmed);
     } catch (error) {
       addMessage({ from: "system", text: `Error: ${(error as Error).message}` });
     } finally {
@@ -173,7 +227,7 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
           addMessage({ from: "system", text: "Usage: /ask <message>" });
           return;
         }
-        await askProvider(command.args);
+        await askProviderWithTools(command.args);
         return;
       case "read":
         await runRead(parsePathList(command.args));
@@ -227,10 +281,7 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
         });
         return;
       case "status":
-        addMessage({
-          from: "tool",
-          text: `provider=${runtime.settings.provider} model=${runtime.settings.model ?? "(default)"} tasks=${monitor.tasks.length} subagents=${monitor.agents.length} tools=${monitor.tools.length}`
-        });
+        addMessage({ from: "tool", text: statusLine(runtime, monitor.tasks.length, monitor.agents.length, monitor.tools.length) });
         return;
       case "kill": {
         const stopped = runtime.subAgentManager.stop("global", undefined, "TUI /kill command");
@@ -248,26 +299,38 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
     }
   };
 
-  const askProvider = async (prompt: string) => {
-    const response = await runtime.providerRegistry.generateText({
-      messages: [
-        {
-          role: "system",
-          content: "You are Chorus inside a terminal TUI. Be concise. The TUI will run local tools for slash commands and obvious file-read requests."
-        },
-        ...messages
-          .filter((message) => message.from === "user" || message.from === "chorus")
-          .slice(-10)
-          .map((message) => ({
-            role: message.from === "user" ? "user" as const : "assistant" as const,
-            content: message.text
-          })),
-        { role: "user" as const, content: prompt }
-      ],
-      model: runtime.settings.model,
-      maxTokens: 1024
-    });
-    addMessage({ from: "chorus", text: response.text || "(empty response)" });
+  const askProviderWithTools = async (prompt: string) => {
+    const providerMessages = providerConversation(messages, prompt, runtime.toolGateway.list().map((tool) => tool.name));
+
+    for (let turn = 0; turn < maxModelToolTurns; turn += 1) {
+      const response = await runtime.providerRegistry.generateText({
+        messages: providerMessages,
+        model: runtime.settings.model,
+        maxTokens: 1200
+      });
+      const toolCall = extractModelToolCall(response.text);
+      if (!toolCall) {
+        addMessage({ from: "chorus", text: stripModelToolCall(response.text) || "(empty response)" });
+        return;
+      }
+
+      addMessage({ from: "tool", text: `model -> ${toolCall.name} ${clip(JSON.stringify(toolCall.params), 600)}` });
+      const result = await runtime.toolGateway.execute(toolCall.name, toolCall.params, toolContext());
+      const formatted = formatToolResult(toolCall.name, result);
+      addMessage({ from: result.status === "ok" ? "tool" : "system", text: formatted });
+
+      providerMessages.push({ role: "assistant", content: response.text });
+      providerMessages.push({
+        role: "user",
+        content: [
+          `Tool result for ${toolCall.name}:`,
+          clip(JSON.stringify(compactToolResult(result), null, 2), 7000),
+          "Now continue. If another tool is needed, emit one more <chorus_tool_call> JSON block. Otherwise answer normally."
+        ].join("\n")
+      });
+    }
+
+    addMessage({ from: "system", text: `Stopped after ${maxModelToolTurns} model-requested tool call(s) to avoid a loop.` });
   };
 
   const runRead = async (paths: string[]) => {
@@ -308,41 +371,124 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
   });
 
   return (
-    <Box flexDirection="column" paddingX={1}>
-      <Box borderStyle="single" borderColor="cyan" paddingX={1} marginBottom={1}>
-        <Text color="cyan" bold>Chorus</Text>
-        <Text>  provider: {runtime.settings.provider}  model: {runtime.settings.model ?? "(default)"}  / commands  Ctrl+C quit</Text>
+    <Box flexDirection="column" paddingX={1} width={frameWidth + 2} overflow="hidden">
+      <Box width={frameWidth} borderStyle="single" borderColor="gray" paddingX={1} flexDirection="column" marginBottom={1}>
+        <Text bold>› Chorus <Text dimColor>(v0.1.0)</Text></Text>
+        <Text dimColor>model: <Text color="white">{runtime.settings.model ?? "(default)"}</Text>  provider: <Text color="cyan">{runtime.settings.provider}</Text></Text>
+        <Text dimColor>directory: {truncateDisplay(process.cwd(), Math.max(12, innerWidth - 11))}</Text>
       </Box>
 
-      <Box borderStyle="single" borderColor="green" height={20} paddingX={1} flexDirection="column">
-        <Text color="green">Conversation</Text>
-        {messages.map((message, index) => (
-          <Text key={`${index}-${message.from}`} color={messageColor(message.from)}>
-            {prefix(message.from)} {clip(message.text, 1200)}
+      <Box width={frameWidth} height={viewportHeight} flexDirection="column" overflow="hidden">
+        {visibleLines.length === 0 ? <Text dimColor> </Text> : visibleLines.map((line, index) => (
+          <Text key={`${firstVisibleLine}-${index}-${line.from}`} color={messageColor(line.from)} wrap="truncate-end">
+            {line.text}
           </Text>
         ))}
       </Box>
 
-      <Box marginTop={1} minHeight={1}>
-        <Text dimColor>
-          tasks {monitor.tasks.length} | sub-agents {monitor.agents.length} | tools {monitor.tools.length} | {busy ? "busy" : "ready"}
-        </Text>
+      <Box width={frameWidth} minHeight={1}>
+        <Text dimColor>{statusLine(runtime, monitor.tasks.length, monitor.agents.length, monitor.tools.length)} | {busy ? "busy" : "ready"} | {scrollHint(normalizedScroll, maxScroll)}</Text>
       </Box>
 
       {paletteOpen ? (
-        <Box borderStyle="single" borderColor="magenta" paddingX={1} flexDirection="column" marginTop={1}>
-          <Text color="magenta">Command palette</Text>
-          <SelectInput items={commandItems} onSelect={chooseCommand} isFocused={!busy} />
-          <Text dimColor>Esc closes. Enter selects. Up/down moves.</Text>
+        <Box width={frameWidth} borderStyle="single" borderColor="gray" paddingX={1} flexDirection="column" marginTop={1}>
+          <Text dimColor>Commands</Text>
+          <SelectInput items={visibleCommandItems} onSelect={chooseCommand} isFocused={!busy} limit={paletteLimit} />
+          <Text dimColor>Esc closes. Enter selects.</Text>
         </Box>
       ) : null}
 
-      <Box borderStyle="single" borderColor="yellow" paddingX={1} marginTop={1}>
-        <Text color={busy ? "gray" : "yellow"}>{busy ? "..." : "> "}</Text>
+      <Box width={frameWidth} borderStyle="single" borderColor="gray" paddingX={1} marginTop={1}>
+        <Text color={busy ? "gray" : "white"}>{busy ? "…" : "› "}</Text>
         <TextInput value={input} onChange={updateInput} onSubmit={submitInput} focus={!busy && !paletteOpen} />
       </Box>
     </Box>
   );
+}
+
+function useTerminalSize(): TerminalSize {
+  const { stdout } = useStdout();
+  const readSize = () => ({
+    columns: stdout.columns || process.stdout.columns || 80,
+    rows: stdout.rows || process.stdout.rows || 24
+  });
+  const [size, setSize] = useState<TerminalSize>(readSize);
+
+  useEffect(() => {
+    const onResize = () => {
+      setSize(readSize());
+    };
+    stdout.on("resize", onResize);
+    return () => {
+      stdout.off("resize", onResize);
+    };
+  }, [stdout]);
+
+  return size;
+}
+
+function providerConversation(messages: TuiMessage[], prompt: string, toolNames: string[]): ProviderMessage[] {
+  return [
+    {
+      role: "system",
+      content: [
+        "You are Chorus inside a terminal TUI. Be concise and practical.",
+        "You may request local tools when needed. To call one tool, respond with exactly one JSON object inside these tags and no other prose:",
+        '<chorus_tool_call>{"tool":"read","params":{"path":"/absolute/or/relative/path"}}</chorus_tool_call>',
+        `Available tools: ${toolNames.join(", ")}.`,
+        "Use read/list/search/memory for information gathering. Use bash only for harmless commands. Never say you will use a tool unless you emit the tool-call block.",
+        "After a tool result is returned, answer normally unless another tool is required."
+      ].join("\n")
+    },
+    ...messages
+      .filter((message) => message.from === "user" || message.from === "chorus")
+      .slice(-10)
+      .map((message) => ({
+        role: message.from === "user" ? "user" as const : "assistant" as const,
+        content: message.text
+      })),
+    { role: "user", content: prompt }
+  ];
+}
+
+export function extractModelToolCall(text: string): ModelToolCall | undefined {
+  const tagged = toolCallTagPattern.exec(text);
+  const candidate = tagged?.[1] ?? (looksLikeToolCallJson(text) ? text.trim() : undefined);
+  if (!candidate) return undefined;
+  try {
+    const parsed = JSON.parse(candidate) as { tool?: unknown; name?: unknown; params?: unknown };
+    const name = typeof parsed.tool === "string" ? parsed.tool : typeof parsed.name === "string" ? parsed.name : "";
+    if (!name) return undefined;
+    return { name, params: parsed.params ?? {} };
+  } catch {
+    return undefined;
+  }
+}
+
+function looksLikeToolCallJson(text: string): boolean {
+  const trimmed = text.trim();
+  return trimmed.startsWith("{") && trimmed.endsWith("}") && /"(tool|name)"\s*:/u.test(trimmed);
+}
+
+function stripModelToolCall(text: string): string {
+  return text.replace(toolCallTagPattern, "").trim();
+}
+
+function compactToolResult(result: ToolResult): ToolResult {
+  return {
+    status: result.status,
+    summary: result.summary,
+    data: shrinkForModel(result.data),
+    error: result.error,
+    risk: result.risk
+  };
+}
+
+function shrinkForModel(value: unknown): unknown {
+  if (typeof value === "string") return clip(value, 6000);
+  if (Array.isArray(value)) return value.map((item) => shrinkForModel(item));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, shrinkForModel(item)]));
 }
 
 function parseSlashCommand(raw: string): ParsedSlashCommand | undefined {
@@ -409,7 +555,7 @@ function formatReadResult(result: ToolResult): string {
   const data = result.data as { files?: Array<{ path: string; content: string }> } | undefined;
   if (!data?.files?.length) return `${result.status}: ${result.summary}`;
   return data.files
-    .map((file) => `${file.path}\n${clip(file.content, 3000)}`)
+    .map((file) => `${file.path}\n${clip(file.content, 6000)}`)
     .join("\n\n");
 }
 
@@ -427,6 +573,72 @@ function formatProcessResult(command: string, result: ToolResult): string {
   return output ? `${command}: ${result.summary}\n${clip(output, 3000)}` : `${command}: ${result.summary}`;
 }
 
+function flattenMessages(messages: TuiMessage[], width: number): RenderLine[] {
+  const lines: RenderLine[] = [];
+  for (const message of messages) {
+    const prefixText = prefix(message.from);
+    const wrapped = wrapDisplay(`${prefixText} ${message.text}`, width);
+    for (const line of wrapped) {
+      lines.push({ from: message.from, text: line });
+    }
+  }
+  return lines;
+}
+
+export function wrapDisplay(text: string, maxWidth: number): string[] {
+  const safeWidth = Math.max(8, maxWidth);
+  const output: string[] = [];
+  for (const rawLine of text.split("\n")) {
+    let current = "";
+    let width = 0;
+    for (const char of [...rawLine]) {
+      const nextWidth = displayWidth(char);
+      if (width > 0 && width + nextWidth > safeWidth) {
+        output.push(current);
+        current = "";
+        width = 0;
+      }
+      current += char;
+      width += nextWidth;
+    }
+    output.push(current || " ");
+  }
+  return output;
+}
+
+function truncateDisplay(text: string, maxWidth: number): string {
+  const safeWidth = Math.max(4, maxWidth);
+  let result = "";
+  let width = 0;
+  for (const char of [...text]) {
+    const nextWidth = displayWidth(char);
+    if (width + nextWidth > safeWidth - 1) {
+      return `${result}…`;
+    }
+    result += char;
+    width += nextWidth;
+  }
+  return result;
+}
+
+function displayWidth(char: string): number {
+  const code = char.codePointAt(0) ?? 0;
+  if (code === 0x200d || code === 0xfe0f || (code >= 0x300 && code <= 0x36f)) return 0;
+  if (
+    (code >= 0x1100 && code <= 0x115f)
+    || (code >= 0x2e80 && code <= 0xa4cf)
+    || (code >= 0xac00 && code <= 0xd7a3)
+    || (code >= 0xf900 && code <= 0xfaff)
+    || (code >= 0xfe10 && code <= 0xfe6f)
+    || (code >= 0xff00 && code <= 0xff60)
+    || (code >= 0xffe0 && code <= 0xffe6)
+    || (code >= 0x1f300 && code <= 0x1faff)
+  ) {
+    return 2;
+  }
+  return 1;
+}
+
 function messageColor(from: TuiMessage["from"]): "yellow" | "white" | "red" | "cyan" {
   if (from === "user") return "yellow";
   if (from === "system") return "red";
@@ -435,10 +647,22 @@ function messageColor(from: TuiMessage["from"]): "yellow" | "white" | "red" | "c
 }
 
 function prefix(from: TuiMessage["from"]): string {
-  if (from === "user") return "user:";
+  if (from === "user") return "›";
   if (from === "tool") return "tool:";
-  if (from === "system") return "system:";
+  if (from === "system") return "!";
   return "chorus:";
+}
+
+function statusLine(runtime: ChorusRuntime, tasks: number, agents: number, tools: number): string {
+  return `tasks ${tasks} | sub-agents ${agents} | tools ${tools} | ${runtime.settings.provider}`;
+}
+
+function scrollHint(scrollOffset: number, maxScroll: number): string {
+  return maxScroll > 0 ? `scroll ${scrollOffset}/${maxScroll} ↑↓` : "scroll 0/0";
+}
+
+function clamp(min: number, value: number, max: number): number {
+  return Math.max(min, Math.min(value, max));
 }
 
 function clip(text: string, max: number): string {

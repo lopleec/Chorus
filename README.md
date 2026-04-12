@@ -48,7 +48,7 @@ Open the main bordered TUI:
 pnpm dev tui
 ```
 
-Type in the bottom chat box and press Enter to talk. Type `/` to open the command palette, use the up/down arrow keys, then press Enter.
+Type in the bottom chat box and press Enter to talk. Type `/` to open the command palette, use the up/down arrow keys, then press Enter. When the command palette is closed, use up/down or PageUp/PageDown to scroll the conversation.
 
 Useful TUI commands:
 
@@ -76,6 +76,8 @@ You can also paste a local absolute path into normal chat and ask about its cont
 ```
 
 Chorus detects that as a file-read request and calls the `read` tool instead of letting the model only talk about reading it.
+
+The TUI also lets the model request tools during normal chat through a small provider-neutral tool-call protocol. When the model asks for a tool, Chorus executes it through the same `ToolGateway`, shows the result in the conversation, and sends the result back to the model for the final answer.
 
 It saves settings to:
 
@@ -298,7 +300,7 @@ Expected result:
 
 ```text
 7 test files passed
-19 tests passed
+21 tests passed
 ```
 
 Node may print an experimental warning for `node:sqlite` on Node 23. The warning is expected and does not indicate a failing check.
