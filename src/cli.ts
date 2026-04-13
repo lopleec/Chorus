@@ -38,14 +38,13 @@ program.command("tui").description("Open the bordered interactive TUI.").action(
     render(React.createElement(MainTuiApp, {
       runtime,
       onExit: () => {
-        runtime.close();
-        resolve();
+        void runtime.close().finally(resolve);
       }
     }));
   });
 });
 
-program.command("status").description("Show runtime status.").action(() => {
+program.command("status").description("Show runtime status.").action(async () => {
   const runtime = createRuntime();
   try {
     const tasks = runtime.scheduler.listTasks();
@@ -73,12 +72,12 @@ program.command("status").description("Show runtime status.").action(() => {
       providers: runtime.providerRegistry.list()
     }, null, 2));
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 });
 
 program.command("ask")
-  .description("Ask the configured provider for one response.")
+  .description("Ask through the Chorus chat gateway, including memory and model-requested tools.")
   .argument("<prompt...>", "Prompt text")
   .option("--provider <provider>", "Provider id")
   .option("--model <model>", "Model id")
@@ -86,27 +85,54 @@ program.command("ask")
     const runtime = createRuntime();
     try {
       const env = readProviderEnv();
-      const response = await runtime.providerRegistry.generateText({
+      let wroteText = false;
+      for await (const event of runtime.chatGateway.runTurn({
+        prompt: prompt.join(" "),
+        provider: options.provider,
         model: options.model ?? env.model,
-        messages: [{ role: "user", content: prompt.join(" ") }],
+        context: { actorId: "cli", actorRole: "main", cwd: process.cwd() },
+        workspace: process.cwd(),
+        autoCommit: true,
         maxTokens: 1024
-      }, options.provider);
-      console.log(response.text);
+      })) {
+        if (event.type === "text_delta") {
+          wroteText = true;
+          process.stdout.write(event.text);
+        }
+        if (event.type === "assistant_message") {
+          wroteText = true;
+          process.stdout.write(event.text);
+        }
+        if (event.type === "tool_call" || event.type === "tool_result") {
+          process.stderr.write(`${event.summary}\n`);
+        }
+        if (event.type === "auto_commit") {
+          process.stderr.write(`${event.result.summary}\n`);
+        }
+        if (event.type === "system") {
+          process.stderr.write(`${event.message}\n`);
+        }
+        if (event.type === "error") {
+          process.stderr.write(`Error: ${event.error}\n`);
+          process.exitCode = 1;
+        }
+      }
+      if (wroteText) process.stdout.write("\n");
     } finally {
-      runtime.close();
+      await runtime.close();
     }
   });
 
 const tools = program.command("tools").description("Inspect tools.");
 
-tools.command("list").description("List registered tools.").action(() => {
+tools.command("list").description("List registered tools.").action(async () => {
   const runtime = createRuntime();
   try {
     for (const tool of runtime.toolGateway.list()) {
       console.log(`${tool.name}\t${tool.description}`);
     }
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 });
 
@@ -125,7 +151,7 @@ program.command("tool")
       });
       console.log(JSON.stringify(result, null, 2));
     } finally {
-      runtime.close();
+      await runtime.close();
     }
   });
 
@@ -139,7 +165,7 @@ memory.command("add")
   .option("--workspace <workspace>", "Workspace")
   .option("--tags <tags>", "Comma-separated tags")
   .option("--weight <weight>", "Weight", Number.parseFloat)
-  .action((options: { summary: string; body?: string; kind: "world_fact" | "belief" | "experience" | "summary"; workspace?: string; tags?: string; weight?: number }) => {
+  .action(async (options: { summary: string; body?: string; kind: "world_fact" | "belief" | "experience" | "summary"; workspace?: string; tags?: string; weight?: number }) => {
     const runtime = createRuntime();
     try {
       const entry = runtime.memoryStore.add({
@@ -153,7 +179,7 @@ memory.command("add")
       });
       console.log(JSON.stringify(entry, null, 2));
     } finally {
-      runtime.close();
+      await runtime.close();
     }
   });
 
@@ -163,7 +189,7 @@ memory.command("search")
   .option("--workspace <workspace>", "Workspace")
   .option("--tags <tags>", "Comma-separated tags")
   .option("--top <topK>", "Top K", (value) => Number.parseInt(value, 10), 5)
-  .action((keyword: string | undefined, options: { workspace?: string; tags?: string; top: number }) => {
+  .action(async (keyword: string | undefined, options: { workspace?: string; tags?: string; top: number }) => {
     const runtime = createRuntime();
     try {
       const results = runtime.memoryStore.search({
@@ -174,27 +200,27 @@ memory.command("search")
       }, { actorId: "cli" });
       console.log(JSON.stringify(results, null, 2));
     } finally {
-      runtime.close();
+      await runtime.close();
     }
   });
 
-memory.command("prune").description("Prune expired low-value memory entries.").action(() => {
+memory.command("prune").description("Prune expired low-value memory entries.").action(async () => {
   const runtime = createRuntime();
   try {
     console.log(JSON.stringify(runtime.memoryStore.prune(), null, 2));
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 });
 
 const subagents = program.command("subagents").description("Manage sub-agents.");
 
-subagents.command("list").description("List sub-agents.").action(() => {
+subagents.command("list").description("List sub-agents.").action(async () => {
   const runtime = createRuntime();
   try {
     console.log(JSON.stringify(runtime.subAgentManager.list(), null, 2));
   } finally {
-    runtime.close();
+    await runtime.close();
   }
 });
 
@@ -203,14 +229,14 @@ subagents.command("stop")
   .argument("[id]", "Sub-agent or task id")
   .option("--scope <scope>", "agent | task | global", "agent")
   .option("--reason <reason>", "Reason", "stopped from CLI")
-  .action((id: string | undefined, options: { scope: "agent" | "task" | "global"; reason: string }) => {
+  .action(async (id: string | undefined, options: { scope: "agent" | "task" | "global"; reason: string }) => {
     const runtime = createRuntime();
     try {
       console.log(JSON.stringify({
         stopped: runtime.subAgentManager.stop(options.scope, id, options.reason)
       }, null, 2));
     } finally {
-      runtime.close();
+      await runtime.close();
     }
   });
 

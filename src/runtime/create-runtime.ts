@@ -24,7 +24,7 @@ export interface ChorusRuntime {
   scheduler: TaskScheduler;
   subAgentManager: SubAgentManager;
   toolGateway: ToolGateway;
-  close(): void;
+  close(): Promise<void>;
 }
 
 export function createRuntime(env: NodeJS.ProcessEnv = process.env): ChorusRuntime {
@@ -63,8 +63,8 @@ export function createRuntime(env: NodeJS.ProcessEnv = process.env): ChorusRunti
     scheduler,
     subAgentManager,
     toolGateway,
-    close: () => {
-      void toolGateway.close();
+    close: async () => {
+      await toolGateway.close();
       database.close();
     }
   };

@@ -184,7 +184,7 @@ Show runtime status:
 pnpm dev status
 ```
 
-Ask the configured provider:
+Ask through the chat gateway. This uses memory and can let the model request tools; tool events are printed on stderr and the final assistant text is printed on stdout:
 
 ```bash
 pnpm dev ask "Say hello from Chorus"

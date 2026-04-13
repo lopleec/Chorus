@@ -20,6 +20,7 @@ export interface ChatTurnRequest {
   history?: ChatHistoryMessage[];
   context: ToolContext;
   workspace?: string;
+  provider?: string;
   model?: string;
   maxTokens?: number;
   maxToolTurns?: number;
@@ -91,7 +92,7 @@ export class ChatGateway {
           messages: providerMessages,
           model: request.model ?? this.services.settings.model,
           maxTokens: request.maxTokens ?? 1200
-        })) {
+        }, request.provider)) {
           const text = chunkText(chunk);
           responseText += text;
           if (!suppressVisible && shouldShowStream(responseText)) {
