@@ -1,6 +1,6 @@
 # Chorus
 
-Chorus is a local-first macOS agent core with a CLI, TUI onboarding, provider routing, tool gateway, sub-agent scheduler, persistent memory, operation logs, and a first pass at the built-in tool set.
+Chorus is a local-first macOS agent core with a CLI, TUI onboarding, provider routing, a UI-independent chat gateway, tool gateway, sub-agent scheduler, persistent memory, operation logs, browser control, and skill discovery.
 
 This repository currently implements the kernel, command-line workflow, onboarding TUI, and a lightweight chat TUI with slash commands.
 
@@ -67,7 +67,11 @@ You can also paste a local absolute path into normal chat and ask about its cont
 
 Chorus sends that to the model in the normal chat loop. If the model requests `read`, the tool gateway executes it, returns the file data to the model, and the model answers. For obvious file-path prompts, Chorus also has a fallback that routes the `read` result back to the model instead of dumping raw file content directly into the chat.
 
-The TUI lets the model request tools during normal chat through a small provider-neutral tool-call protocol. When the model asks for a tool, Chorus executes it through the same `ToolGateway`, shows the exact tool name plus a redacted parameter summary and result status in the conversation, and sends the result back to the model for the final answer.
+The TUI talks to the model through the UI-independent `ChatGateway`, so the same event stream can later drive WebUI or IM frontends. When the model asks for a tool, Chorus executes it through the same `ToolGateway`, shows the exact tool name plus a redacted parameter summary and result status in the conversation, and sends the result back to the model for the final answer.
+
+Each chat turn also recalls top-k matching long-term memory from SQLite and injects it into the provider context before the model answers.
+
+When a TUI chat turn changes files inside a git repository, Chorus snapshots the repo before the turn and auto-commits new changes after the turn. Pre-existing dirty files are left out of that auto-commit so user edits are not silently swept in.
 
 It saves settings to:
 
@@ -163,6 +167,7 @@ Important files:
 - `~/.chorus/chorus.sqlite` for structured state and memory
 - `~/.chorus/logs/operations.jsonl` for tool execution logs
 - `~/.chorus/tasks/<task-id>.jsonl` for task timelines
+- `~/.chorus/skills/**/SKILL.md` for local skills
 - `~/.chorus/workspaces/<workspace>/summary.md` for human-readable notes
 
 Use `CHORUS_HOME` to run Chorus against a different data directory:
@@ -220,6 +225,18 @@ pnpm dev tool web '{"action":"read","url":"https://example.com"}'
 pnpm dev tool web '{"action":"search","query":"Chorus local agent"}'
 ```
 
+Persistent browser session tool:
+
+```bash
+pnpm dev tool browser '{"action":"open","url":"https://example.com","sessionId":"demo"}'
+pnpm dev tool browser '{"action":"snapshot","sessionId":"demo"}'
+pnpm dev tool browser '{"action":"click","sessionId":"demo","selector":"text=More information"}'
+pnpm dev tool browser '{"action":"screenshot","sessionId":"demo"}'
+pnpm dev tool browser '{"action":"close","sessionId":"demo"}'
+```
+
+The browser tool first tries Playwright's bundled Chromium, then falls back to system Chrome, Chromium, or Edge if the bundled browser is not installed.
+
 Git helper:
 
 ```bash
@@ -239,9 +256,23 @@ Sub-agents:
 
 ```bash
 pnpm dev tool open_subagent '{"goal":"Inspect README","workspace":"chorus","success_criteria":["Report findings"],"file_scope":["README.md"]}'
+pnpm dev tool contact '{"recipientId":"<sub-agent-id>","type":"coordination","body":"Use src only."}'
+pnpm dev tool read_inbox '{"recipientId":"<sub-agent-id>","markRead":true}'
 pnpm dev subagents list
 pnpm dev subagents stop <sub-agent-id> --scope agent --reason "manual stop"
 ```
+
+Omit `recipientId` in `contact` to send a sub-agent message back to the main agent inbox. Use `recipientIds` to send the same message to multiple sub-agents.
+
+Skills:
+
+```bash
+pnpm dev tool skills '{"action":"list"}'
+pnpm dev tool skills '{"action":"search","query":"browser"}'
+pnpm dev tool skills '{"action":"read","name":"browser-helper"}'
+```
+
+Skill discovery reads `~/.chorus/skills`, paths from `CHORUS_SKILL_PATHS`, and `~/.codex/skills` when present.
 
 Addon review:
 
@@ -263,8 +294,10 @@ Current tools:
 - `search`
 - `del`
 - `memory`
+- `skills`
 - `http`
 - `web`
+- `browser`
 - `git`
 - `screen`
 - `ui`
@@ -272,6 +305,7 @@ Current tools:
 - `mcp`
 - `open_subagent`
 - `contact`
+- `read_inbox`
 - `stop`
 - `list_subagents`
 - `install_addon`
@@ -289,8 +323,8 @@ pnpm check
 Expected result:
 
 ```text
-7 test files passed
-26 tests passed
+8 test files passed
+29 tests passed
 ```
 
 Node may print an experimental warning for `node:sqlite` on Node 23. The warning is expected and does not indicate a failing check.

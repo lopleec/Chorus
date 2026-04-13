@@ -1,15 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
-  busyStateText,
   detectReadIntent,
   extractAbsolutePaths,
   extractModelToolCall,
+  toolCallActivityText
+} from "../../src/agent/chat-gateway.js";
+import {
+  busyStateText,
   isKnownSlashCommandInput,
   markdownLines,
   mouseWheelDelta,
   spinnerGlyph,
   stripMouseReports,
-  toolCallActivityText,
   wrapDisplay
 } from "../../src/tui/main-app.js";
 
@@ -64,12 +66,12 @@ describe("TUI command routing helpers", () => {
 
   it("renders basic markdown into terminal lines", () => {
     expect(markdownLines("# Title\n- **item**\n> quote\n```ts\nconst x = 1\n```")).toEqual([
-      { text: "TITLE", style: "heading" },
+      { text: "# Title", style: "heading" },
       { text: "- item", style: "list" },
-      { text: "| quote", style: "quote" },
-      { text: "--- ts ---", style: "code" },
+      { text: "> quote", style: "quote" },
+      { text: "```ts", style: "code" },
       { text: "const x = 1", style: "code" },
-      { text: "---", style: "code" }
+      { text: "```", style: "code" }
     ]);
   });
 

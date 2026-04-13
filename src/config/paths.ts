@@ -8,6 +8,7 @@ export interface ChorusPaths {
   configPath: string;
   tasksDir: string;
   logsDir: string;
+  skillsDir: string;
   workspacesDir: string;
   operationsLogPath: string;
 }
@@ -23,6 +24,7 @@ export function getChorusPaths(home = resolveChorusHome()): ChorusPaths {
     configPath: join(home, "config.json"),
     tasksDir: join(home, "tasks"),
     logsDir: join(home, "logs"),
+    skillsDir: join(home, "skills"),
     workspacesDir: join(home, "workspaces"),
     operationsLogPath: join(home, "logs", "operations.jsonl")
   };
@@ -32,6 +34,7 @@ export function ensureChorusDirs(paths: ChorusPaths): void {
   mkdirSync(paths.home, { recursive: true });
   mkdirSync(paths.tasksDir, { recursive: true });
   mkdirSync(paths.logsDir, { recursive: true });
+  mkdirSync(paths.skillsDir, { recursive: true });
   mkdirSync(paths.workspacesDir, { recursive: true });
 }
 

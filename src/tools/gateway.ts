@@ -54,6 +54,12 @@ export class ToolGateway {
     }
   }
 
+  async close(): Promise<void> {
+    await Promise.all([...this.tools.values()].map(async (tool) => {
+      await tool.dispose?.();
+    }));
+  }
+
   private finish(name: string, params: unknown, context: ToolContext, started: number, result: ToolResult): ToolResult {
     const record: OperationRecord = {
       id: createId("op"),

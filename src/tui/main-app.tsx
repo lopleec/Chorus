@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import SelectInput from "ink-select-input";
 import TextInput from "ink-text-input";
-import type { ProviderMessage, ToolContext, ToolResult } from "../core/types.js";
+import type { ChatHistoryMessage } from "../agent/chat-gateway.js";
+import type { ToolContext } from "../core/types.js";
 import type { ChorusRuntime } from "../runtime/create-runtime.js";
 
 interface TuiMessage {
@@ -33,16 +34,6 @@ interface ParsedSlashCommand {
   args: string;
 }
 
-interface ReadIntent {
-  kind: "read";
-  paths: string[];
-}
-
-interface ModelToolCall {
-  name: string;
-  params: unknown;
-}
-
 interface TerminalSize {
   columns: number;
   rows: number;
@@ -61,11 +52,7 @@ const commandItems: CommandItem[] = [
 ];
 
 const commandNameSet = new Set<string>(commandItems.map((item) => item.value));
-const absolutePathPattern = /(?:\/[^\s"'`<>|，。！？、,;:!?）)\]]+)+/gu;
-const readIntentPattern = /(内容|有什么|看看|看一下|读取|读一下|查看|打开|里面|文件|what.*(content|contain|say)|read|show|open|cat|look)/iu;
-const toolCallTagPattern = /<chorus_tool_call>\s*([\s\S]*?)\s*<\/chorus_tool_call>/iu;
 const mouseReportPattern = /(?:\x1b)?\[<(\d+)[;:]\d+[;:]\d+[mM]/gu;
-const maxModelToolTurns = 4;
 const spinnerFrames = ["|", "/", "-", "\\"];
 
 function initialMessage(): TuiMessage {
@@ -232,7 +219,7 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
         return;
       }
 
-      await askProviderWithTools(trimmed);
+      await runChatTurn(trimmed);
     } catch (error) {
       pushMessage("system", `Error: ${(error as Error).message}`);
     } finally {
@@ -268,62 +255,46 @@ export function MainTuiApp({ runtime, onExit }: MainTuiAppProps) {
     }
   };
 
-  const askProviderWithTools = async (prompt: string) => {
-    const providerMessages = providerConversation(messages, prompt, runtime.toolGateway.list().map((tool) => tool.name));
-    const obviousRead = detectReadIntent(prompt);
+  const runChatTurn = async (prompt: string) => {
+    let assistantId: string | undefined;
+    let assistantText = "";
 
-    for (let turn = 0; turn < maxModelToolTurns; turn += 1) {
-      setBusyLabel(turn === 0 ? "model thinking" : "model thinking with tool result");
-      const responseText = await streamProviderTurn(providerMessages, turn === 0 && Boolean(obviousRead));
-      const toolCall = extractModelToolCall(responseText)
-        ?? (turn === 0 && obviousRead ? readIntentToToolCall(obviousRead) : undefined);
-      if (!toolCall) {
-        if (!responseText.trim()) {
-          pushMessage("chorus", "(empty response)");
+    for await (const event of runtime.chatGateway.runTurn({
+      prompt,
+      history: chatHistory(messages),
+      context: toolContext(),
+      workspace: process.cwd(),
+      autoCommit: true
+    })) {
+      if (event.type === "status") {
+        setBusyLabel(event.label);
+      }
+      if (event.type === "text_delta") {
+        assistantText += event.text;
+        assistantId ??= pushMessage("chorus", "");
+        updateMessage(assistantId, assistantText);
+      }
+      if (event.type === "assistant_message") {
+        if (assistantId) {
+          assistantText = event.text;
+          updateMessage(assistantId, assistantText);
+        } else {
+          assistantId = pushMessage("chorus", event.text);
         }
-        return;
       }
-
-      setBusyLabel(`calling tool: ${toolCall.name}`);
-      pushMessage("tool", toolCallActivityText(toolCall));
-      const result = await runtime.toolGateway.execute(toolCall.name, toolCall.params, toolContext());
-      pushMessage("tool", toolResultActivityText(toolCall, result));
-      providerMessages.push({
-        role: "assistant",
-        content: responseText.trim() || modelToolCallText(toolCall)
-      });
-      providerMessages.push({
-        role: "user",
-        content: [
-          `Tool result for ${toolCall.name}:`,
-          clip(JSON.stringify(compactToolResult(result), null, 2), 7000),
-          "Now continue. If another tool is needed, emit one more <chorus_tool_call> JSON block. Otherwise answer normally."
-        ].join("\n")
-      });
-      continue;
-    }
-
-    pushMessage("system", `Stopped after ${maxModelToolTurns} model-requested tool call(s) to avoid a loop.`);
-  };
-
-  const streamProviderTurn = async (providerMessages: ProviderMessage[], suppressVisible = false): Promise<string> => {
-    let id: string | undefined;
-    let buffer = "";
-    for await (const chunk of runtime.providerRegistry.streamText({
-        messages: providerMessages,
-        model: runtime.settings.model,
-        maxTokens: 1200
-      })) {
-      buffer += chunk.text;
-      if (!suppressVisible && shouldShowStream(buffer)) {
-        id ??= pushMessage("chorus", "");
-        updateMessage(id, stripModelToolCall(buffer));
+      if (event.type === "tool_call" || event.type === "tool_result") {
+        pushMessage("tool", event.summary);
+      }
+      if (event.type === "auto_commit" && event.result.status !== "none") {
+        pushMessage("tool", event.result.summary);
+      }
+      if (event.type === "system") {
+        pushMessage("system", event.message);
+      }
+      if (event.type === "error") {
+        pushMessage("system", `Error: ${event.error}`);
       }
     }
-    if (!suppressVisible && !id && !extractModelToolCall(buffer) && buffer.trim()) {
-      pushMessage("chorus", stripModelToolCall(buffer));
-    }
-    return buffer;
   };
 
   const toolContext = (): ToolContext => ({
@@ -405,70 +376,14 @@ function useMouseWheelReporting(): void {
   }, [stdout]);
 }
 
-function providerConversation(messages: TuiMessage[], prompt: string, toolNames: string[]): ProviderMessage[] {
-  return [
-    {
-      role: "system",
-      content: [
-        "You are Chorus inside a terminal TUI. Be concise and practical.",
-        "You may request local tools when needed. To call one tool, respond with exactly one JSON object inside these tags and no other prose:",
-        '<chorus_tool_call>{"tool":"read","params":{"path":"/absolute/or/relative/path"}}</chorus_tool_call>',
-        `Available tools: ${toolNames.join(", ")}.`,
-        "Useful params: read {path} or {paths}; list {path, depth}; search {path, query, depth, maxResults}; memory {action:'search', keyword, topK}; bash {command, cwd}.",
-        "If the user includes a local file path and asks what it contains, asks for a summary, or provides only a path, you must call read before answering.",
-        "Use read/list/search/memory for information gathering. Use bash only for harmless commands. Never say you will use a tool unless you emit the tool-call block.",
-        "After a tool result is returned, answer normally unless another tool is required."
-      ].join("\n")
-    },
-    ...messages
-      .filter((message) => message.from === "user" || message.from === "chorus")
-      .slice(-10)
-      .map((message) => ({
-        role: message.from === "user" ? "user" as const : "assistant" as const,
-        content: message.text
-      })),
-    { role: "user", content: prompt }
-  ];
-}
-
-export function extractModelToolCall(text: string): ModelToolCall | undefined {
-  const tagged = toolCallTagPattern.exec(text);
-  const candidate = tagged?.[1] ?? (looksLikeToolCallJson(text) ? text.trim() : undefined);
-  if (!candidate) return undefined;
-  try {
-    const parsed = JSON.parse(candidate) as { tool?: unknown; name?: unknown; params?: unknown };
-    const name = typeof parsed.tool === "string" ? parsed.tool : typeof parsed.name === "string" ? parsed.name : "";
-    if (!name) return undefined;
-    return { name, params: parsed.params ?? {} };
-  } catch {
-    return undefined;
-  }
-}
-
-function looksLikeToolCallJson(text: string): boolean {
-  const trimmed = text.trim();
-  return trimmed.startsWith("{") && trimmed.endsWith("}") && /"(tool|name)"\s*:/u.test(trimmed);
-}
-
-function stripModelToolCall(text: string): string {
-  return text.replace(toolCallTagPattern, "").trim();
-}
-
-function shouldShowStream(buffer: string): boolean {
-  const trimmed = buffer.trimStart();
-  if (!trimmed) return false;
-  return !"<chorus_tool_call>".startsWith(trimmed) && !trimmed.startsWith("<chorus_tool_call>");
-}
-
-function readIntentToToolCall(intent: ReadIntent): ModelToolCall {
-  return {
-    name: "read",
-    params: intent.paths.length === 1 ? { path: intent.paths[0] } : { paths: intent.paths }
-  };
-}
-
-function modelToolCallText(call: ModelToolCall): string {
-  return `<chorus_tool_call>${JSON.stringify({ tool: call.name, params: call.params })}</chorus_tool_call>`;
+function chatHistory(messages: TuiMessage[]): ChatHistoryMessage[] {
+  return messages
+    .filter((message) => message.from === "user" || message.from === "chorus")
+    .slice(-10)
+    .map((message) => ({
+      role: message.from === "user" ? "user" : "assistant",
+      content: message.text
+    }));
 }
 
 export function spinnerGlyph(index: number): string {
@@ -477,49 +392,6 @@ export function spinnerGlyph(index: number): string {
 
 export function busyStateText(busy: boolean, spinnerIndex: number, label: string): string {
   return busy ? `${spinnerGlyph(spinnerIndex)} ${label}` : "ready";
-}
-
-export function toolCallActivityText(call: ModelToolCall): string {
-  const params = summarizeToolParams(call.params);
-  return `agent tool call: ${call.name}${params ? ` ${params}` : ""}`;
-}
-
-function toolResultActivityText(call: ModelToolCall, result: ToolResult): string {
-  return `agent tool result: ${call.name} ${result.status} - ${clip(result.summary, 220)}`;
-}
-
-function summarizeToolParams(params: unknown): string {
-  const json = JSON.stringify(redactSensitive(params));
-  if (!json || json === "{}") return "";
-  return clip(json, 220);
-}
-
-function redactSensitive(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map((item) => redactSensitive(item));
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(Object.entries(value).map(([key, item]) => {
-    if (/(api[_-]?key|token|secret|password|authorization)/iu.test(key)) {
-      return [key, "[redacted]"];
-    }
-    return [key, redactSensitive(item)];
-  }));
-}
-
-function compactToolResult(result: { status: string; summary: string; data?: unknown; error?: string; risk?: string }) {
-  return {
-    status: result.status,
-    summary: result.summary,
-    data: shrinkForModel(result.data),
-    error: result.error,
-    risk: result.risk
-  };
-}
-
-function shrinkForModel(value: unknown): unknown {
-  if (typeof value === "string") return clip(value, 6000);
-  if (Array.isArray(value)) return value.map((item) => shrinkForModel(item));
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, shrinkForModel(item)]));
 }
 
 function parseSlashCommand(raw: string): ParsedSlashCommand | undefined {
@@ -537,32 +409,6 @@ function splitFirstWord(text: string): [string, string] {
   const firstSpace = trimmed.search(/\s/u);
   if (firstSpace < 0) return [trimmed, ""];
   return [trimmed.slice(0, firstSpace), trimmed.slice(firstSpace + 1)];
-}
-
-export function detectReadIntent(text: string): ReadIntent | undefined {
-  const paths = extractAbsolutePaths(text);
-  if (paths.length === 0 || (!readIntentPattern.test(text) && !isOnlyPaths(text, paths))) {
-    return undefined;
-  }
-  return { kind: "read", paths };
-}
-
-export function extractAbsolutePaths(text: string): string[] {
-  const matches = text.match(absolutePathPattern) ?? [];
-  const seen = new Set<string>();
-  const paths: string[] = [];
-  for (const match of matches) {
-    const cleaned = cleanPath(match);
-    if (cleaned && !seen.has(cleaned)) {
-      seen.add(cleaned);
-      paths.push(cleaned);
-    }
-  }
-  return paths;
-}
-
-function cleanPath(path: string): string {
-  return path.replace(/[，。！？、,;:!?）)\]]+$/u, "");
 }
 
 export function isKnownSlashCommandInput(text: string): boolean {
@@ -604,17 +450,6 @@ function isSlashCommandPrefix(text: string): boolean {
   return commandItems.some((item) => item.value.startsWith(lowered));
 }
 
-function isOnlyPaths(text: string, paths: string[]): boolean {
-  let remaining = text;
-  for (const path of paths) {
-    const index = remaining.indexOf(path);
-    if (index >= 0) {
-      remaining = `${remaining.slice(0, index)}${remaining.slice(index + path.length)}`;
-    }
-  }
-  return remaining.replace(/[\s，。！？、,;:!?()[\]{}"'`<>|]+/gu, "").length === 0;
-}
-
 function flattenMessages(messages: TuiMessage[], width: number): RenderLine[] {
   const lines: RenderLine[] = [];
   for (const message of messages) {
@@ -645,8 +480,8 @@ export function markdownLines(markdown: string): Array<{ text: string; style: Re
     const fence = /^```+\s*([^`]*)$/u.exec(trimmed);
     if (fence) {
       inFence = !inFence;
-      fenceLabel = inFence ? (fence[1]?.trim() || "code") : "";
-      lines.push({ text: inFence ? `--- ${fenceLabel} ---` : "---", style: "code" });
+      fenceLabel = inFence ? fence[1]?.trim() ?? "" : "";
+      lines.push({ text: inFence ? `\`\`\`${fenceLabel}` : "```", style: "code" });
       continue;
     }
     if (inFence) {
@@ -661,13 +496,13 @@ export function markdownLines(markdown: string): Array<{ text: string; style: Re
 
     const heading = /^(#{1,6})\s+(.+)$/u.exec(rawLine);
     if (heading) {
-      lines.push({ text: cleanInlineMarkdown(heading[2] ?? "").toUpperCase(), style: "heading" });
+      lines.push({ text: `${heading[1]} ${cleanInlineMarkdown(heading[2] ?? "")}`, style: "heading" });
       continue;
     }
 
     const quote = /^>\s?(.*)$/u.exec(rawLine);
     if (quote) {
-      lines.push({ text: `| ${cleanInlineMarkdown(quote[1] ?? "")}`, style: "quote" });
+      lines.push({ text: `> ${cleanInlineMarkdown(quote[1] ?? "")}`, style: "quote" });
       continue;
     }
 
@@ -676,6 +511,11 @@ export function markdownLines(markdown: string): Array<{ text: string; style: Re
       const indent = list[1] ?? "";
       const marker = list[2] ?? "-";
       lines.push({ text: `${indent}${marker} ${cleanInlineMarkdown(list[3] ?? "")}`, style: "list" });
+      continue;
+    }
+
+    if (/^\s*\|.+\|\s*$/u.test(rawLine)) {
+      lines.push({ text: cleanInlineMarkdown(rawLine), style: "code" });
       continue;
     }
 
@@ -691,7 +531,7 @@ function cleanInlineMarkdown(text: string): string {
     .replace(/\*\*([^*]+)\*\*/gu, "$1")
     .replace(/__([^_]+)__/gu, "$1")
     .replace(/\*([^*]+)\*/gu, "$1")
-    .replace(/_([^_]+)_/gu, "$1")
+    .replace(/(^|[\s(])_([^_\n]+)_([\s).,;:!?]|$)/gu, "$1$2$3")
     .replace(/\[([^\]]+)\]\(([^)]+)\)/gu, "$1 ($2)");
 }
 
@@ -784,8 +624,4 @@ function scrollHint(scrollOffset: number, maxScroll: number): string {
 
 function clamp(min: number, value: number, max: number): number {
   return Math.max(min, Math.min(value, max));
-}
-
-function clip(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max)}...` : text;
 }

@@ -43,6 +43,7 @@ export interface ToolDefinition<TParams = unknown, TData = unknown> {
   description: string;
   paramsSchema: z.ZodType<TParams>;
   execute(params: TParams, context: ToolContext): Promise<ToolResult<TData>>;
+  dispose?(): Promise<void> | void;
 }
 
 export interface ToolCall<TParams = unknown> {

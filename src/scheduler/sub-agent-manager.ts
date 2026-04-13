@@ -92,11 +92,30 @@ export class SubAgentManager {
     return { id, senderId, recipientId, taskId, type, body, createdAt: at, readAt: null };
   }
 
-  inbox(recipientId: string): InboxMessage[] {
-    const rows = this.database.db
-      .prepare("SELECT * FROM subagent_inbox WHERE recipient_id = ? ORDER BY created_at ASC")
-      .all(recipientId) as unknown as InboxRow[];
+  inbox(recipientId: string, options: { unreadOnly?: boolean } = {}): InboxMessage[] {
+    const rows = options.unreadOnly
+      ? this.database.db
+        .prepare("SELECT * FROM subagent_inbox WHERE recipient_id = ? AND read_at IS NULL ORDER BY created_at ASC")
+        .all(recipientId) as unknown as InboxRow[]
+      : this.database.db
+        .prepare("SELECT * FROM subagent_inbox WHERE recipient_id = ? ORDER BY created_at ASC")
+        .all(recipientId) as unknown as InboxRow[];
     return rows.map(mapInbox);
+  }
+
+  markInboxRead(recipientId: string, ids?: string[]): number {
+    const at = nowIso();
+    if (ids?.length) {
+      const update = this.database.db.prepare("UPDATE subagent_inbox SET read_at = ? WHERE recipient_id = ? AND id = ? AND read_at IS NULL");
+      let count = 0;
+      for (const id of ids) {
+        count += Number(update.run(at, recipientId, id).changes);
+      }
+      return count;
+    }
+    return Number(this.database.db
+      .prepare("UPDATE subagent_inbox SET read_at = ? WHERE recipient_id = ? AND read_at IS NULL")
+      .run(at, recipientId).changes);
   }
 
   stop(scope: "global" | "task" | "agent", id?: string, reason = "stopped"): number {

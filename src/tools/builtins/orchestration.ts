@@ -28,18 +28,39 @@ export function orchestrationTools(subAgents: SubAgentManager, scheduler: TaskSc
     },
     {
       name: "contact",
-      description: "Send a structured inbox message to another worker.",
+      description: "Send a structured inbox message between main/sub agents, or between sub-agents.",
       paramsSchema: z.object({
         senderId: z.string().optional(),
-        recipientId: z.string(),
+        recipientId: z.string().optional(),
+        recipientIds: z.array(z.string()).default([]),
         type: z.string().default("note"),
         body: z.string(),
         taskId: z.string().optional()
       }),
       async execute(params, context) {
-        const input = params as { senderId?: string; recipientId: string; type: string; body: string; taskId?: string };
-        const message = subAgents.contact(input.senderId ?? context.actorId, input.recipientId, input.type, input.body, input.taskId ?? context.taskId);
-        return { status: "ok", summary: `Sent ${message.type} message to ${message.recipientId}.`, data: { message } };
+        const input = params as { senderId?: string; recipientId?: string; recipientIds: string[]; type: string; body: string; taskId?: string };
+        const senderId = input.senderId ?? context.subAgentId ?? context.actorId;
+        const requestedRecipients = input.recipientId ? [input.recipientId, ...input.recipientIds] : input.recipientIds;
+        const recipients = [...new Set(requestedRecipients.length ? requestedRecipients : ["main"])];
+        const messages = recipients.map((recipientId) => subAgents.contact(senderId, recipientId, input.type, input.body, input.taskId ?? context.taskId));
+        return { status: "ok", summary: `Sent ${messages.length} ${input.type} message(s).`, data: { messages } };
+      }
+    },
+    {
+      name: "read_inbox",
+      description: "Read the main-agent or sub-agent inbox, optionally marking messages as read.",
+      paramsSchema: z.object({
+        recipientId: z.string().optional(),
+        unreadOnly: z.boolean().default(false),
+        markRead: z.boolean().default(false),
+        messageIds: z.array(z.string()).optional()
+      }),
+      async execute(params, context) {
+        const input = params as { recipientId?: string; unreadOnly: boolean; markRead: boolean; messageIds?: string[] };
+        const recipientId = input.recipientId ?? context.subAgentId ?? context.actorId ?? "main";
+        const messages = subAgents.inbox(recipientId, { unreadOnly: input.unreadOnly });
+        const marked = input.markRead ? subAgents.markInboxRead(recipientId, input.messageIds) : 0;
+        return { status: "ok", summary: `Read ${messages.length} inbox message(s) for ${recipientId}.`, data: { recipientId, messages, markedRead: marked } };
       }
     },
     {

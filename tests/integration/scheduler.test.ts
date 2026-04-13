@@ -22,6 +22,21 @@ describe("scheduler and sub-agent manager", () => {
       expect(contact.status).toBe("ok");
       expect(temp.runtime.subAgentManager.inbox(agentId)).toHaveLength(1);
 
+      const inbox = await temp.runtime.toolGateway.execute("read_inbox", {
+        recipientId: agentId,
+        markRead: true
+      }, { actorId: agentId, actorRole: "sub", subAgentId: agentId, cwd: temp.home });
+      expect(inbox.status).toBe("ok");
+      expect((inbox.data as { messages: unknown[]; markedRead: number }).messages).toHaveLength(1);
+      expect((inbox.data as { messages: unknown[]; markedRead: number }).markedRead).toBe(1);
+
+      const reply = await temp.runtime.toolGateway.execute("contact", {
+        type: "handoff",
+        body: "Done."
+      }, { actorId: agentId, actorRole: "sub", subAgentId: agentId, cwd: temp.home });
+      expect(reply.status).toBe("ok");
+      expect(temp.runtime.subAgentManager.inbox("main")).toHaveLength(1);
+
       const stopped = await temp.runtime.toolGateway.execute("stop", {
         scope: "agent",
         id: agentId,

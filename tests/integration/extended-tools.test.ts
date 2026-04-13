@@ -94,4 +94,35 @@ describe("extended tools", () => {
       rmSync(temp.home, { recursive: true, force: true });
     }
   });
+
+  it("discovers local skills and exposes browser session errors without launching a page", async () => {
+    const temp = createTempRuntime();
+    try {
+      const skillDir = join(temp.runtime.paths.skillsDir, "browser-helper");
+      mkdirSync(skillDir, { recursive: true });
+      writeFileSync(join(skillDir, "SKILL.md"), "# browser-helper\nUse for browser automation.\n", "utf8");
+
+      const skills = await temp.runtime.toolGateway.execute("skills", {
+        action: "search",
+        query: "browser"
+      }, { actorId: "test", actorRole: "main", cwd: temp.home });
+      expect(skills.status).toBe("ok");
+      expect(JSON.stringify(skills.data)).toContain("browser-helper");
+
+      const read = await temp.runtime.toolGateway.execute("skills", {
+        action: "read",
+        name: "browser-helper"
+      }, { actorId: "test", actorRole: "main", cwd: temp.home });
+      expect(read.status).toBe("ok");
+      expect(JSON.stringify(read.data)).toContain("Use for browser automation");
+
+      const browser = await temp.runtime.toolGateway.execute("browser", {
+        action: "snapshot"
+      }, { actorId: "test", actorRole: "main", cwd: temp.home });
+      expect(browser.status).toBe("error");
+      expect(browser.summary).toContain("No browser page is open");
+    } finally {
+      temp.cleanup();
+    }
+  });
 });
